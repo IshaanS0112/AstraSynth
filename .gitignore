@@ -1,0 +1,15 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.env
+.pytest_cache/
+.ruff_cache/
+backend/storage/
+node_modules/
+dist/
+.DS_Store
+*.tif
+*.TIF
+data/sample_terrain/mars_*
+backend/tests/_fixture_terrain.png

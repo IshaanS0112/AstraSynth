@@ -1,0 +1,48 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: astra
+      POSTGRES_PASSWORD: astra
+      POSTGRES_DB: astrasynth
+    ports:
+      - "5432:5432"
+    volumes:
+      - astra_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      # The backend creates its schema on startup, so it must not start until
+      # Postgres is actually accepting connections - not merely "container up".
+      test: ["CMD-SHELL", "pg_isready -U astra -d astrasynth"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    build:
+      context: ./backend
+    environment:
+      DATABASE_URL: postgresql+psycopg2://astra:astra@db:5432/astrasynth
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      CORS_ORIGINS: http://localhost:5173,http://localhost:3000
+    ports:
+      - "8000:8000"
+    volumes:
+      - astra_storage:/app/storage
+      - ./data:/app/data:ro
+    depends_on:
+      db:
+        condition: service_healthy
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        VITE_API_BASE_URL: http://localhost:8000
+    ports:
+      - "5173:80"
+    depends_on:
+      - backend
+
+volumes:
+  astra_pgdata:
+  astra_storage:
