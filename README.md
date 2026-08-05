@@ -77,6 +77,10 @@ This is self-consistency against terrain I generated to be those types — **not
 
 ## Quick start
 
+> **Never run this before?** `docs/RUNNING.md` is a step-by-step walkthrough from
+> opening a terminal through to verifying every stage works, with a check after
+> each step and a troubleshooting section.
+
 ```bash
 git clone https://github.com/<you>/AstraSynth.git && cd AstraSynth
 

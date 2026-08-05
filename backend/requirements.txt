@@ -1,11 +1,15 @@
-fastapi==0.115.6
+# Pinned to the versions the test suite was actually run against, so a fresh
+# clone reproduces the documented results rather than whatever pip resolves
+# today. opencv 4.10+ is the first line that supports numpy 2.x - mixing an
+# older opencv with numpy 2 fails at import, not at runtime.
+fastapi==0.140.13
 uvicorn[standard]==0.34.0
-sqlalchemy==2.0.36
+sqlalchemy==2.0.51
 psycopg2-binary==2.9.10
-pydantic==2.10.4
+pydantic==2.13.4
 pydantic-settings==2.7.0
 python-multipart==0.0.20
-opencv-python-headless==4.10.0.84
-numpy==2.2.1
-anthropic==0.42.0
+opencv-python-headless==4.13.0.92
+numpy==2.2.6
+anthropic==0.120.2
 python-dotenv==1.0.1

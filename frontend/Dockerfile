@@ -1,7 +1,9 @@
 FROM node:22-alpine AS build
 WORKDIR /app
-COPY package.json ./
-RUN npm install
+# npm ci uses the committed lockfile, so the image builds the exact
+# dependency tree that was tested rather than re-resolving it.
+COPY package.json package-lock.json ./
+RUN npm ci
 COPY . .
 RUN npm run build
 
