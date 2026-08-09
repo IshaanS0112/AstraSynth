@@ -100,6 +100,8 @@ Then: **New mission** → upload a tile from `data/sample_terrain/` → **Analys
 
 ### Without Docker
 
+Needs Python 3.10+.
+
 ```bash
 # Backend
 cd backend

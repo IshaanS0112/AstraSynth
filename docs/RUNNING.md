@@ -32,13 +32,20 @@ If you'd rather use VS Code: `code ~/BASE/02-projects/AstraSynth`, then use its 
 
 Do this first. It runs the entire analysis pipeline end to end and needs nothing but Python. If this works, the core of the project works, and anything that breaks later is infrastructure, not logic.
 
+**Python 3.10 or newer.** Check with `python3 --version`.
+
+Create the virtual environment **at the project root**, not inside `backend/` — the `scripts/` commands below are written to run from the root:
+
 ```bash
+cd ~/BASE/02-projects/AstraSynth
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r backend/requirements-dev.txt
 ```
 
 That takes a minute or two. Your prompt should now start with `(.venv)`.
+
+**If pip fails building `psycopg2-binary` with `pg_config executable not found`:** you are on a Python version newer than the pinned wheels covered. `backend/requirements.txt` now ranges the compiled packages so pip picks a wheel for whatever Python you have — make sure you have the current version of that file, then re-run the install. See [Troubleshooting](#troubleshooting).
 
 ```bash
 python scripts/run_pipeline_demo.py \
@@ -280,6 +287,17 @@ Working as intended — the rover's slope limit or the lethal-hazard threshold w
 
 **Report says "Deterministic fallback" and you expected the LLM**
 No `ANTHROPIC_API_KEY` reached the container. Export it in the shell *before* `docker compose up`, then `docker compose up --force-recreate backend`. The report is still complete — only the prose differs. The panel shows the exact fallback reason.
+
+**`Error: pg_config executable not found` while installing `psycopg2-binary`**
+pip couldn't find a prebuilt wheel for your Python version, so it tried to compile the PostgreSQL driver from source and hit a missing toolchain. Almost always means your Python is newer than the wheels the pinned version shipped — Python 3.14, for example, needs `psycopg2-binary >= 2.9.11` and `numpy >= 2.3.2`.
+
+`backend/requirements.txt` ranges those two packages precisely so pip resolves a wheel for whatever Python you're on. If you're seeing this, you have an older copy of that file — pull the latest and re-run:
+
+```bash
+pip install -r backend/requirements-dev.txt
+```
+
+`ModuleNotFoundError: No module named 'pydantic_settings'` and `zsh: command not found: pytest` immediately afterwards are downstream of this — the whole install aborted, so nothing got installed. Fix the install and both go away.
 
 **`ModuleNotFoundError: No module named 'app'`**
 You're in the wrong directory or the venv isn't active. `cd` into `backend/` for pytest, and into the project root for the `scripts/` commands. Check for `(.venv)` in your prompt.

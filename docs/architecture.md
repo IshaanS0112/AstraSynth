@@ -219,7 +219,10 @@ Written after building and testing, not before.
 
 **7. The default elevation range produced implausible terrain.** `elevation_range_m = 120` over a 512 px tile at 2 m/px meant 120 m of relief across 1 km — mean slope 23°, and 9,131 candidate moves blocked by the slope limit on a single plan. Dropped the default to 40 m, which gives 2–9° mean slopes across the presets. This is a *scenario* parameter, not a code constant, which is why `prepare_usgs_terrain.py` measures it from the real DEM and prints the value to put in `.env`.
 
-**8. Rounding stored values broke exact test comparisons.** `total_distance_m` is rounded to millimetres for storage, so `9√2 = 12.727922...` comes back as `12.728` and a `rel=1e-6` assertion fails. Kept the rounding (millimetre precision on a kilometre traverse is not the weak link) and moved the tolerance to match the stored precision. Worth being deliberate about where rounding happens rather than discovering it from a failing test.
+**8. Exact pins on compiled packages broke the install on a newer Python.**
+`requirements.txt` pinned `psycopg2-binary==2.9.10` and `numpy==2.2.6` - the exact versions the suite was validated against. On Python 3.14 neither has a wheel, so pip fell back to building psycopg2 from source and died on `pg_config executable not found`, taking the whole install with it. An exact pin on a package with compiled extensions doesn't just pin the version, it implicitly pins the set of Python versions that release published wheels for. Now: pure-Python dependencies are pinned exactly for reproducibility, compiled ones get a floor (the first release with wheels for the newest supported Python) and a major-version ceiling. The install is verified against Python 3.10, 3.12 and 3.14 with `pip download --only-binary=:all: --python-version ...`, which resolves wheels without installing anything.
+
+**9. Rounding stored values broke exact test comparisons.** `total_distance_m` is rounded to millimetres for storage, so `9√2 = 12.727922...` comes back as `12.728` and a `rel=1e-6` assertion fails. Kept the rounding (millimetre precision on a kilometre traverse is not the weak link) and moved the tolerance to match the stored precision. Worth being deliberate about where rounding happens rather than discovering it from a failing test.
 
 ---
 
