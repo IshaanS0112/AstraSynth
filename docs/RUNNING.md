@@ -40,10 +40,15 @@ Create the virtual environment **at the project root**, not inside `backend/` �
 cd ~/BASE/02-projects/AstraSynth
 python3 -m venv .venv
 source .venv/bin/activate
-pip install -r backend/requirements-dev.txt
+python -m pip install --upgrade pip
+python -m pip install -r backend/requirements-dev.txt
 ```
 
 That takes a minute or two. Your prompt should now start with `(.venv)`.
+
+`python3` for the first command, plain `python` after that. macOS has no `python`
+or `pip` on PATH at all - the venv is what creates them, so if activation didn't
+work every following command fails with `command not found: python`.
 
 **If pip fails building `psycopg2-binary` with `pg_config executable not found`:** you are on a Python version newer than the pinned wheels covered. `backend/requirements.txt` now ranges the compiled packages so pip picks a wheel for whatever Python you have — make sure you have the current version of that file, then re-run the install. See [Troubleshooting](#troubleshooting).
 
@@ -86,7 +91,7 @@ python scripts/run_pipeline_demo.py \
 ### Run the tests
 
 ```bash
-cd backend && pytest && cd ..
+cd backend && python -m pytest && cd ..
 ```
 
 **Check:** `84 passed, 6 skipped`. The 6 skips are the API tests, which need PostgreSQL — they'll run in Step 3.
@@ -190,7 +195,7 @@ Now that Postgres is up, the 6 skipped tests can run:
 ```bash
 cd ~/BASE/02-projects/AstraSynth/backend
 source ../.venv/bin/activate
-pytest -v tests/test_api.py
+python -m pytest -v tests/test_api.py
 ```
 
 **Check:** `6 passed`. These drive the whole HTTP pipeline — upload → analyse → plan → assess → report — and assert that an unreachable goal returns 422 rather than 500, and that server file paths never leak into responses.
@@ -198,7 +203,7 @@ pytest -v tests/test_api.py
 Full suite:
 
 ```bash
-pytest
+python -m pytest
 # 90 passed
 ```
 
@@ -298,6 +303,19 @@ pip install -r backend/requirements-dev.txt
 ```
 
 `ModuleNotFoundError: No module named 'pydantic_settings'` and `zsh: command not found: pytest` immediately afterwards are downstream of this — the whole install aborted, so nothing got installed. Fix the install and both go away.
+
+**`source: no such file or directory: .venv/bin/activate`**
+The virtual environment isn't there - either it was never created, or it's at a
+different level than you think. It belongs at the project root, so from
+`~/BASE/02-projects/AstraSynth` run `ls -d .venv`. If that comes back empty,
+recreate it with the Step 1 commands. Nothing is lost by rebuilding it: a venv
+holds only downloaded packages, never your code, which is why `.gitignore`
+excludes it.
+
+**`zsh: command not found: python` or `command not found: pip`**
+macOS ships neither name. Use `python3` to create the venv; plain `python` and
+`pip` only exist *after* `source .venv/bin/activate` succeeds. Check for
+`(.venv)` at the start of your prompt before running anything else.
 
 **`ModuleNotFoundError: No module named 'app'`**
 You're in the wrong directory or the venv isn't active. `cd` into `backend/` for pytest, and into the project root for the `scripts/` commands. Check for `(.venv)` in your prompt.
