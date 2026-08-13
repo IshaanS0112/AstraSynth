@@ -82,7 +82,7 @@ This is self-consistency against terrain I generated to be those types — **not
 > each step and a troubleshooting section.
 
 ```bash
-git clone https://github.com/Ishaana0112/AstraSynth.git && cd AstraSynth
+git clone https://github.com/IshaanS0112/AstraSynth.git && cd AstraSynth
 
 # Generate sample terrain (no download required, runs offline)
 pip install opencv-python-headless numpy
