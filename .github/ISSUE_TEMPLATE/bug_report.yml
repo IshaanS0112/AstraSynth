@@ -1,0 +1,41 @@
+name: Bug report
+description: Something behaves differently from what the docs describe
+labels: [bug]
+body:
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you expected, and what you got instead.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: Ideally the exact command, plus the terrain tile and rover config used.
+      placeholder: |
+        1. python scripts/generate_terrain.py --size 512
+        2. POST /missions/{id}/plan-path with start=..., end=..., rover=...
+        3. Observed: ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      placeholder: |
+        OS:              macOS 15.2 (arm64)
+        Python:          3.12.4
+        Running via:     docker compose / local uvicorn
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant output
+      description: Traceback, API response body, or `docker compose logs backend --tail 50`.
+      render: shell

@@ -73,12 +73,7 @@ def create_mission(
 def list_missions(db: DbSession, limit: int = 50, offset: int = 0) -> list[Mission]:
     from sqlalchemy import select
 
-    stmt = (
-        select(Mission)
-        .order_by(Mission.created_at.desc())
-        .limit(min(limit, 200))
-        .offset(offset)
-    )
+    stmt = select(Mission).order_by(Mission.created_at.desc()).limit(min(limit, 200)).offset(offset)
     return list(db.scalars(stmt))
 
 

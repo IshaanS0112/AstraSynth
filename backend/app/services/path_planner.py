@@ -54,8 +54,14 @@ import numpy as np
 # 8-connected grid. Diagonals cost sqrt(2) cells, which the distance term
 # handles naturally because it is computed in metres.
 _NEIGHBOURS: tuple[tuple[int, int], ...] = (
-    (-1, 0), (1, 0), (0, -1), (0, 1),
-    (-1, -1), (-1, 1), (1, -1), (1, 1),
+    (-1, 0),
+    (1, 0),
+    (0, -1),
+    (0, 1),
+    (-1, -1),
+    (-1, 1),
+    (1, -1),
+    (1, 1),
 )
 
 

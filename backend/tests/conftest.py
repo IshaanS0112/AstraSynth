@@ -17,8 +17,8 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from app.config import Settings  # noqa: E402
-from app.services.path_planner import RoverSpec  # noqa: E402
+from app.config import Settings
+from app.services.path_planner import RoverSpec
 
 
 @pytest.fixture

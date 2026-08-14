@@ -48,7 +48,7 @@ SEED_ROVERS = [
 
 def seed_rover_configs() -> None:
     with SessionLocal() as db:
-        existing = {name for name in db.scalars(select(RoverConfig.name))}
+        existing = set(db.scalars(select(RoverConfig.name)))
         added = 0
         for spec in SEED_ROVERS:
             if spec["name"] not in existing:

@@ -67,12 +67,14 @@ def main() -> int:
 
     settings = Settings(_env_file=None)
 
-    print(f"Cost function: {'distance_m * (1 + hazard) * (1 + k*|rise/run|)'}")
-    print(f"Heuristic:     euclidean distance in metres (A*), zero (Dijkstra)")
+    print("Cost function: distance_m * (1 + hazard) * (1 + k*|rise/run|)")
+    print("Heuristic:     euclidean distance in metres (A*), zero (Dijkstra)")
     print(f"Repeats:       {args.repeats} (median reported)\n")
     header = f"{'grid':>9} {'A* nodes':>10} {'Dij nodes':>10} {'saved':>7} {'A* ms':>8} {'Dij ms':>8} {'costs agree':>12}"
     print(header)
     print("-" * len(header))
+
+    all_agree = True
 
     for size in args.grid:
         hazard_grid, elevation_grid, meters_per_cell = build_grids(size, settings)
@@ -96,6 +98,7 @@ def main() -> int:
 
         saved = 1 - astar.metadata["nodes_expanded"] / dijkstra.metadata["nodes_expanded"]
         agree = abs(astar.total_cost - dijkstra.total_cost) < 1e-6
+        all_agree = all_agree and agree
 
         print(
             f"{rows:>4}x{cols:<4} {astar.metadata['nodes_expanded']:>10} "
@@ -108,6 +111,10 @@ def main() -> int:
         "cost than Dijkstra the heuristic would be inadmissible and the path would "
         "not be optimal."
     )
+
+    if not all_agree:
+        print("\nFAIL: A* and Dijkstra disagreed on optimal cost.")
+        return 1
     return 0
 
 

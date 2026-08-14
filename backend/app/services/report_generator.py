@@ -124,8 +124,7 @@ def build_structured_context(
 
 def _valid_segment_ids(context: dict[str, Any]) -> set[int]:
     return {
-        int(segment["segment_id"])
-        for segment in context["path_summary"]["high_hazard_segments"]
+        int(segment["segment_id"]) for segment in context["path_summary"]["high_hazard_segments"]
     }
 
 
@@ -241,9 +240,7 @@ def generate_narrative(context: dict[str, Any], settings: Settings) -> dict[str,
     try:
         from anthropic import Anthropic
 
-        client = Anthropic(
-            api_key=settings.anthropic_api_key, timeout=settings.llm_timeout_seconds
-        )
+        client = Anthropic(api_key=settings.anthropic_api_key, timeout=settings.llm_timeout_seconds)
         response = client.messages.create(
             model=settings.anthropic_model,
             max_tokens=settings.llm_max_tokens,
@@ -264,6 +261,6 @@ def generate_narrative(context: dict[str, Any], settings: Settings) -> dict[str,
     except json.JSONDecodeError as exc:
         logger.warning("LLM returned unparseable JSON, falling back: %s", exc)
         return _fallback_narrative(context, f"unparseable model output: {exc}")
-    except Exception as exc:  # noqa: BLE001 - the report must degrade, never 500
+    except Exception as exc:
         logger.warning("LLM narrative generation failed, falling back: %s", exc)
         return _fallback_narrative(context, f"{type(exc).__name__}: {exc}")

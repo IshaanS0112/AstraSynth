@@ -240,9 +240,7 @@ def classify_terrain(
     area_fraction = float((obstacle_mask > 0).mean())
     mean_slope = float(np.mean(slope_deg))
     mean_roughness = float(np.mean(roughness))
-    mean_radius = (
-        float(np.mean([o.radius_px for o in obstacles])) if obstacles else 0.0
-    )
+    mean_radius = float(np.mean([o.radius_px for o in obstacles])) if obstacles else 0.0
 
     evidence = {
         "mean_slope_deg": round(mean_slope, 3),

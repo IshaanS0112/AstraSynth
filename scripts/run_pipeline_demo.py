@@ -2,9 +2,8 @@
 """Run the full analysis pipeline on one terrain image, with no database.
 
 Useful for three things: sanity-checking the engines after a change, tuning the
-classification and hazard constants against a known image, and demonstrating in
-an interview that the numbers come out of the algorithms rather than out of the
-API layer.
+classification and hazard constants against a known image, and showing that the
+numbers come out of the algorithms rather than out of the API layer.
 
 Usage::
 

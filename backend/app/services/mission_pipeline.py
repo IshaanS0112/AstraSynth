@@ -25,13 +25,8 @@ from sqlalchemy.orm import Session
 
 from app.config import Settings
 from app.enums import MissionStatus
-from app.models import (
-    Mission,
-    MissionRiskReport,
-    RoverConfig,
-    RoverPath,
-    TerrainAnalysis as TerrainAnalysisRow,
-)
+from app.models import Mission, MissionRiskReport, RoverConfig, RoverPath
+from app.models import TerrainAnalysis as TerrainAnalysisRow
 from app.services import hazard_mapper, report_generator, risk_engine, terrain_analyzer
 from app.services.path_planner import (
     PathNotFoundError,
@@ -63,9 +58,7 @@ def rover_spec(config: RoverConfig) -> RoverSpec:
 # --- Stage 1: terrain analysis ---------------------------------------------
 
 
-def run_terrain_analysis(
-    db: Session, mission: Mission, settings: Settings
-) -> TerrainAnalysisRow:
+def run_terrain_analysis(db: Session, mission: Mission, settings: Settings) -> TerrainAnalysisRow:
     analysis = terrain_analyzer.analyze_terrain(mission.terrain_image_path, settings)
     hazard = hazard_mapper.build_hazard_map(analysis, settings)
 
@@ -86,9 +79,7 @@ def run_terrain_analysis(
         analysis.elevation_m.astype(np.float32), settings.planning_grid_max_dim
     )
     arrays_path = directory / "analysis.npz"
-    np.savez_compressed(
-        arrays_path, hazard_grid=hazard_grid, elevation_grid=elevation_grid
-    )
+    np.savez_compressed(arrays_path, hazard_grid=hazard_grid, elevation_grid=elevation_grid)
 
     metadata = {
         **analysis.stats,
@@ -102,9 +93,7 @@ def run_terrain_analysis(
         "arrays_path": str(arrays_path),
     }
 
-    row = db.scalar(
-        select(TerrainAnalysisRow).where(TerrainAnalysisRow.mission_id == mission.id)
-    )
+    row = db.scalar(select(TerrainAnalysisRow).where(TerrainAnalysisRow.mission_id == mission.id))
     if row is None:
         row = TerrainAnalysisRow(mission_id=mission.id)
         db.add(row)
@@ -272,9 +261,7 @@ def run_risk_assessment(
         risk=risk,
     )
 
-    row = db.scalar(
-        select(MissionRiskReport).where(MissionRiskReport.rover_path_id == path_row.id)
-    )
+    row = db.scalar(select(MissionRiskReport).where(MissionRiskReport.rover_path_id == path_row.id))
     if row is None:
         row = MissionRiskReport(mission_id=mission.id, rover_path_id=path_row.id)
         db.add(row)

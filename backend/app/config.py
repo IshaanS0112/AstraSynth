@@ -31,16 +31,16 @@ class Settings(BaseSettings):
     # pixel gradients into real slope angles, so they are recorded per mission.
     meters_per_pixel: float = 2.0
     elevation_range_m: float = 40.0
-    roughness_window: int = 9          # NxN window for local-variance roughness
+    roughness_window: int = 9  # NxN window for local-variance roughness
 
     # Canny thresholds are derived per image from the gradient distribution
     # rather than hard-coded. Fixed thresholds detect essentially nothing on a
     # smooth DEM and everything on a high-contrast one; see docs/architecture.md
     # ("Bugs found"). High threshold = this percentile of gradient magnitude.
     canny_gradient_percentile: float = 97.0
-    canny_low_ratio: float = 0.5       # low threshold = ratio * high threshold
-    morph_close_kernel: int = 5        # joins broken Canny fragments into regions
-    min_obstacle_area_px: int = 40     # contours smaller than this are noise
+    canny_low_ratio: float = 0.5  # low threshold = ratio * high threshold
+    morph_close_kernel: int = 5  # joins broken Canny fragments into regions
+    min_obstacle_area_px: int = 40  # contours smaller than this are noise
 
     # --- Hazard scoring weights (must sum to 1.0) --------------------------
     hazard_w_slope: float = 0.5
@@ -58,8 +58,8 @@ class Settings(BaseSettings):
     sandy_plain_max_area_fraction: float = 0.10
 
     # --- Path planning ------------------------------------------------------
-    planning_grid_max_dim: int = 192   # hazard map is downsampled to this for A*
-    energy_slope_coefficient: float = 0.5   # k in energy_factor = 1 + k*|slope|
+    planning_grid_max_dim: int = 192  # hazard map is downsampled to this for A*
+    energy_slope_coefficient: float = 0.5  # k in energy_factor = 1 + k*|slope|
     # Lethal-hazard layer: cells at or above this are removed from the graph.
     # The (1 + hazard) cost term alone caps out at 2x and can never outweigh a
     # detour of more than one cell, so cost shaping needs a hard layer beside it.
@@ -70,7 +70,7 @@ class Settings(BaseSettings):
     risk_weight_energy: float = 0.4
     risk_threshold_low: float = 0.3
     risk_threshold_medium: float = 0.6
-    energy_margin_fraction: float = 0.85   # above this -> FEASIBLE_WITH_MARGIN
+    energy_margin_fraction: float = 0.85  # above this -> FEASIBLE_WITH_MARGIN
 
     @property
     def cors_origin_list(self) -> list[str]:

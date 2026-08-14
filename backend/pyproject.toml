@@ -1,0 +1,32 @@
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+extend-exclude = ["storage"]
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings
+    "F",    # pyflakes
+    "I",    # import sorting
+    "B",    # bugbear: likely bugs and design problems
+    "C4",   # comprehension simplifications
+    "UP",   # pyupgrade: modern syntax for the target version
+    "SIM",  # simplifications
+    "RUF",  # ruff-specific rules
+]
+ignore = [
+    "E501",    # line length is enforced by the formatter, not the linter
+    "B008",    # FastAPI's Depends()/File()/Form() defaults are the framework idiom
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests deliberately reach into private helpers to check the validation and
+# fallback paths that are not part of the public surface.
+"tests/*" = ["SLF001"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["app"]
+
+[tool.ruff.format]
+quote-style = "double"

@@ -40,9 +40,7 @@ def plan_path(
             detail={"error": "no_traversable_path", "message": str(exc)},
         ) from exc
     except mission_pipeline.PipelineError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT, detail=str(exc)
-        ) from exc
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)

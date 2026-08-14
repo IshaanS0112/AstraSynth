@@ -1,5 +1,6 @@
 import uuid
 from datetime import datetime
+from typing import TYPE_CHECKING
 
 from sqlalchemy import DateTime, ForeignKey, String, func
 from sqlalchemy.dialects.postgresql import JSONB, UUID
@@ -7,6 +8,10 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.session import Base
 from app.enums import MissionStatus
+
+if TYPE_CHECKING:  # avoids a circular import at runtime
+    from app.models.path import RoverPath
+    from app.models.report import MissionRiskReport
 
 
 class Mission(Base):
@@ -26,7 +31,9 @@ class Mission(Base):
         back_populates="mission", cascade="all, delete-orphan", order_by="RoverPath.planned_at"
     )
     reports: Mapped[list["MissionRiskReport"]] = relationship(
-        back_populates="mission", cascade="all, delete-orphan", order_by="MissionRiskReport.generated_at"
+        back_populates="mission",
+        cascade="all, delete-orphan",
+        order_by="MissionRiskReport.generated_at",
     )
 
 

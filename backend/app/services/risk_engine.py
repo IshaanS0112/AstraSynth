@@ -85,9 +85,7 @@ def top_hazard_segments(path: PlannedPath, limit: int = 5) -> list[dict]:
     ]
 
 
-def assess_mission_risk(
-    path: PlannedPath, rover: RoverSpec, settings: Settings
-) -> RiskAssessment:
+def assess_mission_risk(path: PlannedPath, rover: RoverSpec, settings: Settings) -> RiskAssessment:
     hazards = path.hazard_series()
     if not hazards:
         raise ValueError("Cannot assess risk for an empty path")
@@ -99,14 +97,11 @@ def assess_mission_risk(
     # Energy utilisation can exceed 1 on an infeasible plan; clamping keeps the
     # risk score inside [0, 1] so the tier thresholds stay meaningful. The
     # unclamped value is reported separately and drives the feasibility verdict.
-    risk_score = (
-        settings.risk_weight_hazard * mean_hazard
-        + settings.risk_weight_energy * min(energy_utilisation, 1.0)
+    risk_score = settings.risk_weight_hazard * mean_hazard + settings.risk_weight_energy * min(
+        energy_utilisation, 1.0
     )
 
-    tier = tier_for_score(
-        risk_score, settings.risk_threshold_low, settings.risk_threshold_medium
-    )
+    tier = tier_for_score(risk_score, settings.risk_threshold_low, settings.risk_threshold_medium)
     feasibility = assess_feasibility(
         path.total_energy_cost_kwh,
         rover.battery_capacity_kwh,

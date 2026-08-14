@@ -22,9 +22,7 @@ def assess_risk(
         path_row = mission_pipeline.resolve_path(db, mission, payload.rover_path_id)
         return mission_pipeline.run_risk_assessment(db, mission, path_row, settings)
     except mission_pipeline.PipelineError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT, detail=str(exc)
-        ) from exc
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
 
 
 @router.get("/{mission_id}/risk-report", response_model=RiskReportOut)

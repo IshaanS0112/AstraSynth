@@ -12,7 +12,7 @@
 8. [Data model](#data-model)
 9. [Bugs found and lessons learned](#bugs-found-and-lessons-learned)
 10. [Known limitations](#known-limitations)
-11. [Interview questions](#interview-questions)
+11. [Design rationale](#design-rationale)
 
 ---
 
@@ -238,7 +238,10 @@ Written after building and testing, not before.
 
 ---
 
-## Interview questions
+## Design rationale
+
+The questions this design most often raises, and the reasoning behind each
+choice.
 
 **Walk me through the terrain pipeline. Why those OpenCV operations?**
 Sobel for slope because slope *is* the spatial derivative of elevation, and the 3×3 kernel gives it cheaply at every pixel — normalised by 8 and passed through `arctan` so the output is degrees, not an arbitrary number. Canny for obstacles because crater rims and rock edges are gradient ridges and Canny's non-maximum suppression plus hysteresis is the standard way to get thin connected edges out of those. `findContours` turns the edge map into discrete regions with measurable centroids and areas, which is what a planner needs — an edge image isn't an obstacle list. Roughness by local variance via box filters because it's O(1) per pixel regardless of window size and it's interpretable.

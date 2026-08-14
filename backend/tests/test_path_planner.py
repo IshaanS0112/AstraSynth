@@ -99,8 +99,13 @@ class TestOptimality:
         elevation = np.zeros((21, 21), dtype=np.float32)
 
         path = plan_path(
-            hazard, elevation, {"x": 5, "y": 2}, {"x": 5, "y": 18}, rover,
-            meters_per_cell=1.0, max_hazard=1.0,
+            hazard,
+            elevation,
+            {"x": 5, "y": 2},
+            {"x": 5, "y": 18},
+            rover,
+            meters_per_cell=1.0,
+            max_hazard=1.0,
         )
 
         crossings = [w for w in path.waypoints if w.y == 10]
@@ -113,8 +118,13 @@ class TestOptimality:
         elevation = np.zeros((21, 21), dtype=np.float32)
 
         path = plan_path(
-            hazard, elevation, {"x": 5, "y": 2}, {"x": 5, "y": 18}, rover,
-            meters_per_cell=1.0, max_hazard=0.85,
+            hazard,
+            elevation,
+            {"x": 5, "y": 2},
+            {"x": 5, "y": 18},
+            rover,
+            meters_per_cell=1.0,
+            max_hazard=0.85,
         )
 
         crossings = [w for w in path.waypoints if w.y == 10]
@@ -129,8 +139,13 @@ class TestOptimality:
 
         with pytest.raises(PathNotFoundError, match="lethal hazard threshold"):
             plan_path(
-                hazard, elevation, {"x": 5, "y": 2}, {"x": 5, "y": 18}, rover,
-                meters_per_cell=1.0, max_hazard=0.85,
+                hazard,
+                elevation,
+                {"x": 5, "y": 2},
+                {"x": 5, "y": 18},
+                rover,
+                meters_per_cell=1.0,
+                max_hazard=0.85,
             )
 
 

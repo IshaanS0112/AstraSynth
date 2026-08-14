@@ -70,9 +70,9 @@ def build_hazard_map(analysis: TerrainAnalysis, settings: Settings) -> HazardMap
     obstacle_term = obstacle_proximity_penalty(analysis.distance_to_obstacle_m)
     roughness_term = analysis.roughness
 
-    scores = np.clip(
-        w1 * slope_term + w2 * obstacle_term + w3 * roughness_term, 0.0, 1.0
-    ).astype(np.float32)
+    scores = np.clip(w1 * slope_term + w2 * obstacle_term + w3 * roughness_term, 0.0, 1.0).astype(
+        np.float32
+    )
 
     basis = {
         "formula": (

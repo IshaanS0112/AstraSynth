@@ -76,9 +76,10 @@ class TestRoughness:
         checker = np.indices((64, 64)).sum(axis=0) % 2 * 255.0
         gradient = np.tile(np.linspace(0, 255, 64, dtype=np.float32), (64, 1))
 
-        assert compute_roughness(checker.astype(np.float32), 9).mean() > compute_roughness(
-            gradient, 9
-        ).mean()
+        assert (
+            compute_roughness(checker.astype(np.float32), 9).mean()
+            > compute_roughness(gradient, 9).mean()
+        )
 
     def test_stays_within_the_unit_range(self):
         extreme = (np.random.default_rng(0).random((64, 64)) * 255).astype(np.float32)
@@ -116,8 +117,12 @@ class TestObstacleDetection:
         cv2.circle(image, (64, 64), 25, 255, thickness=-1)
 
         obstacles, mask, metadata = detect_obstacles(
-            image, canny_percentile=97.0, canny_low_ratio=0.5,
-            morph_kernel=5, min_area_px=40, meters_per_pixel=2.0,
+            image,
+            canny_percentile=97.0,
+            canny_low_ratio=0.5,
+            morph_kernel=5,
+            min_area_px=40,
+            meters_per_pixel=2.0,
         )
 
         assert len(obstacles) == 1
@@ -231,9 +236,7 @@ class TestClassification:
             ("crater_field", TerrainClass.CRATER_FIELD),
         ],
     )
-    def test_generated_presets_classify_as_intended(
-        self, settings, tmp_path, preset, expected
-    ):
+    def test_generated_presets_classify_as_intended(self, settings, tmp_path, preset, expected):
         """End-to-end check of the rule set against terrain built to be that type.
 
         This is a self-consistency test, not a validation against real labelled
@@ -295,9 +298,7 @@ class TestPipelineIntegration:
         analysis = analyze_terrain(synthetic_terrain_path, settings)
         assert 0.0 <= analysis.stats["slope"]["max_deg"] < 90.0
 
-    def test_gradient_magnitude_is_the_tangent_of_the_slope(
-        self, settings, synthetic_terrain_path
-    ):
+    def test_gradient_magnitude_is_the_tangent_of_the_slope(self, settings, synthetic_terrain_path):
         analysis = analyze_terrain(synthetic_terrain_path, settings)
         sample_slope = float(analysis.slope_deg[64, 64])
         sample_gradient = float(analysis.gradient_magnitude[64, 64])

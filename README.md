@@ -1,18 +1,33 @@
 # AstraSynth
 
-**AI-assisted planetary mission intelligence — terrain hazard analysis, energy-aware rover path planning, and battery feasibility assessment.**
+Terrain hazard analysis, energy-aware rover path planning, and battery feasibility assessment for planetary traverses.
 
-FastAPI · OpenCV · PostgreSQL · React + TypeScript · Docker
+[![CI](https://github.com/IshaanS0112/AstraSynth/actions/workflows/ci.yml/badge.svg)](https://github.com/IshaanS0112/AstraSynth/actions/workflows/ci.yml)
+[![Tests](https://img.shields.io/badge/tests-90%20passing-brightgreen)](backend/tests)
+[![Python](https://img.shields.io/badge/python-3.10%20%7C%203.13-blue)](backend/requirements.txt)
+[![Ruff](https://img.shields.io/badge/lint-ruff-261230)](backend/pyproject.toml)
+[![License](https://img.shields.io/badge/license-MIT-yellow)](LICENSE)
+
+`FastAPI` · `OpenCV` · `PostgreSQL` · `React + TypeScript` · `Docker`
 
 ---
 
-## Why I built this
+## Background
 
-I got interested in rover autonomy after following Chandrayaan-3's landing and reading about how Curiosity's drive planners decide where a rover can actually go. The part that stuck with me is that it isn't one big AI decision — it's a chain of very concrete computations: work out how steep the ground is, work out what you can't drive over, find the cheapest route through what's left, then check whether the battery can actually pay for it.
+Deciding where a rover can drive isn't one decision — it's a chain of concrete
+computations. How steep is the ground. What can't be crossed at all. What's the
+cheapest route through what's left. Can the battery actually pay for it.
 
-So I built that chain. The domain is planetary, but the pipeline — sensor imagery → structured risk metrics → constrained optimisation → readable report — is the same shape as drone survey planning or warehouse robot routing.
+AstraSynth implements that chain. The domain is planetary, but the shape —
+sensor imagery → structured risk metrics → constrained optimisation → readable
+report — is the same one behind drone survey planning and warehouse robot
+routing.
 
-I also wanted to be able to answer one specific question honestly: *is the AI actually computing anything here, or is your code doing the work and the model just describing it?* In AstraSynth the model does the second thing, deliberately, and the system is built so you can verify that.
+The design constraint throughout was that every number has to be traceable to
+the code that produced it. Hazard scores, route costs and feasibility verdicts
+are computed deterministically and stored with the parameters that produced
+them; the language model is confined to the final step, where it turns those
+stored numbers into prose and is prevented from introducing any of its own.
 
 ---
 
@@ -77,9 +92,9 @@ This is self-consistency against terrain I generated to be those types — **not
 
 ## Quick start
 
-> **Never run this before?** `docs/RUNNING.md` is a step-by-step walkthrough from
-> opening a terminal through to verifying every stage works, with a check after
-> each step and a troubleshooting section.
+> [`docs/SETUP.md`](docs/SETUP.md) has the full walkthrough with a verification
+> check after each step, development-without-Docker instructions, and
+> troubleshooting.
 
 ```bash
 git clone https://github.com/IshaanS0112/AstraSynth.git && cd AstraSynth
@@ -143,10 +158,15 @@ The global product is ~11 GB, so the script reads a window out of a file you've 
 ## Tests
 
 ```bash
-cd backend && pytest -v
+cd backend && python -m pytest -v
 ```
 
-84 tests, no network and no database required. They cover:
+**90 tests.** 84 need no network and no database; the remaining 6 drive the full
+HTTP pipeline against PostgreSQL and skip automatically if none is reachable.
+CI runs all 90 against a service container and fails the build if the
+database-backed ones are silently skipped.
+
+Coverage by claim:
 
 - **A\* correctness** — optimal diagonal on flat terrain against a hand-computed distance; identical cost to Dijkstra on random terrain (the empirical admissibility check); detour around an impassable cliff; `PathNotFoundError` when the goal is genuinely walled off; no step ever exceeds the rover's slope limit.
 - **Energy model** — flat-ground energy equals rate × distance exactly; climbing the same distance costs strictly more than the flat case; cumulative energy is monotonic and matches the total.
@@ -154,7 +174,9 @@ cd backend && pytest -v
 - **Risk and feasibility** — every threshold boundary including the exact-equality cases; all three risk tiers are reachable from real inputs; the score stays in `[0, 1]` even when a plan is infeasible.
 - **Report generation** — hallucinated segment IDs are dropped; malformed JSON and model exceptions degrade to the fallback instead of propagating.
 
-Six further API tests exercise the full HTTP pipeline and skip automatically unless PostgreSQL is reachable (the models use `JSONB` and native `UUID`, which SQLite can't emulate — see `tests/test_api.py`).
+- **API contract** — create → analyse → plan → assess → report in order; out-of-order calls return 409; an unreachable goal returns 422, not 500; server filesystem paths never appear in a response.
+
+The API tests need PostgreSQL because the schema uses `JSONB` and native `UUID`, which SQLite cannot emulate. Rewriting the models to generic JSON purely so the tests could run in-memory would mean testing a schema the application never uses.
 
 ---
 
@@ -188,7 +210,7 @@ backend/app/
     report_generator.py    Structured context → constrained LLM → validated → fallback
     mission_pipeline.py    Stage orchestration and persistence
   models/ schemas/ routers/ db/
-  tests/                   84 tests, no network or DB required
+  tests/                   90 tests
 frontend/src/
   components/              TerrainViewer · HazardOverlay · PathVisualization · RiskReportView
   pages/                   Dashboard · MissionDetail · NewMission
@@ -202,6 +224,17 @@ docs/architecture.md       Design decisions · what's real vs simulated · bugs 
 
 ---
 
+## Continuous integration
+
+Every push runs five jobs: the backend suite on Python 3.10 and 3.13 against a
+PostgreSQL service container, `ruff` lint and format checks, frontend typecheck
+and production build, both Docker images, and an end-to-end pipeline smoke test
+that regenerates terrain and re-runs the A*/Dijkstra comparison. The last one
+exists so that a change to the CV pipeline or the cost function that silently
+moves a documented number fails the build rather than the README.
+
+---
+
 ## Roadmap
 
 - [x] OpenCV terrain analysis with adaptive thresholding
@@ -210,7 +243,7 @@ docs/architecture.md       Design decisions · what's real vs simulated · bugs 
 - [x] Battery feasibility engine
 - [x] Structured-context report generation with validated citations and fallback
 - [x] React dashboard with interactive start/goal selection
-- [x] Docker Compose stack, 84 tests, A*/Dijkstra benchmark
+- [x] Docker Compose stack, 90 tests, CI across Python 3.10 and 3.13
 - [ ] Dynamic re-planning against simulated obstacle discovery mid-traverse
 - [ ] CNN terrain classifier compared head-to-head against the rule-based one
 - [ ] Multi-rover coordination
@@ -219,4 +252,7 @@ docs/architecture.md       Design decisions · what's real vs simulated · bugs 
 
 ## Licence
 
-MIT. Terrain data from USGS Astrogeology is public domain and must be cited as shown above.
+MIT — see [LICENSE](LICENSE).
+
+Terrain data from USGS Astrogeology is public domain; the citation above is
+required by the dataset's access constraints.

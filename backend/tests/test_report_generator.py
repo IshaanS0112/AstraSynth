@@ -18,15 +18,14 @@ import json
 import pytest
 
 from app.config import Settings
+from app.services.path_planner import RoverSpec
 from app.services.report_generator import (
     _fallback_narrative,
     _validate_narrative,
     build_structured_context,
     generate_narrative,
 )
-from app.services.path_planner import RoverSpec
 from app.services.risk_engine import assess_mission_risk
-
 from tests.test_risk_engine import make_path
 
 
@@ -150,9 +149,11 @@ class TestNarrativeValidation:
 
     def test_strips_code_fences(self, context):
         """The prompt forbids fences; models add them anyway."""
-        raw = "```json\n" + json.dumps(
-            {"summary": "s", "top_risks": [], "recommendation": "r"}
-        ) + "\n```"
+        raw = (
+            "```json\n"
+            + json.dumps({"summary": "s", "top_risks": [], "recommendation": "r"})
+            + "\n```"
+        )
         assert _validate_narrative(raw, context)["summary"] == "s"
 
     def test_rejects_a_response_missing_a_required_key(self, context):

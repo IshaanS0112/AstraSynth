@@ -47,8 +47,8 @@ class TestFeasibility:
         ("energy", "expected"),
         [
             (1.0, Feasibility.FEASIBLE),
-            (4.24, Feasibility.FEASIBLE),          # just under 0.85 * 5.0
-            (4.25, Feasibility.FEASIBLE),          # exactly at the margin: not over it
+            (4.24, Feasibility.FEASIBLE),  # just under 0.85 * 5.0
+            (4.25, Feasibility.FEASIBLE),  # exactly at the margin: not over it
             (4.26, Feasibility.FEASIBLE_WITH_MARGIN),
             (5.0, Feasibility.FEASIBLE_WITH_MARGIN),  # exactly at capacity: not over it
             (5.01, Feasibility.INFEASIBLE),
@@ -110,8 +110,8 @@ class TestRiskScore:
 
         assert 0.0 <= assessment.risk_score <= 1.0
         assert assessment.feasibility == Feasibility.INFEASIBLE
-        assert assessment.energy_utilisation == pytest.approx(4.0)   # unclamped, reported
-        assert assessment.energy_margin_kwh == pytest.approx(-6.0)   # negative: real deficit
+        assert assessment.energy_utilisation == pytest.approx(4.0)  # unclamped, reported
+        assert assessment.energy_margin_kwh == pytest.approx(-6.0)  # negative: real deficit
 
     def test_matches_the_documented_formula(self, settings):
         rover = RoverSpec(10.0, 25.0, 0.003)

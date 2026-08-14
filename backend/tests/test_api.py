@@ -110,7 +110,11 @@ def test_full_mission_pipeline(client, terrain_bytes):
     rover_id = client.get("/rover-configs").json()[1]["id"]
     premature = client.post(
         f"/missions/{mission_id}/plan-path",
-        json={"start": {"x": 10, "y": 10}, "end": {"x": 240, "y": 240}, "rover_config_id": rover_id},
+        json={
+            "start": {"x": 10, "y": 10},
+            "end": {"x": 240, "y": 240},
+            "rover_config_id": rover_id,
+        },
     )
     assert premature.status_code == 409
 
@@ -118,14 +122,20 @@ def test_full_mission_pipeline(client, terrain_bytes):
     assert analysis.status_code == 200
     analysis_body = analysis.json()
     assert analysis_body["terrain_classification"] in {
-        "rocky_highland", "sandy_plain", "crater_field"
+        "rocky_highland",
+        "sandy_plain",
+        "crater_field",
     }
     assert analysis_body["hazard_heatmap_url"].startswith("/static/")
     assert "arrays_path" not in analysis_body["analysis_metadata"]  # internal path stripped
 
     path = client.post(
         f"/missions/{mission_id}/plan-path",
-        json={"start": {"x": 10, "y": 10}, "end": {"x": 240, "y": 240}, "rover_config_id": rover_id},
+        json={
+            "start": {"x": 10, "y": 10},
+            "end": {"x": 240, "y": 240},
+            "rover_config_id": rover_id,
+        },
     )
     assert path.status_code == 200
     path_body = path.json()
