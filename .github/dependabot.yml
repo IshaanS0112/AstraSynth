@@ -12,6 +12,14 @@ updates:
         patterns: ["*"]
         update-types: ["minor", "patch"]
 
+    # Major bumps are excluded deliberately. Dependabot cannot know that
+    # tailwindcss 3->4 is a config-format rewrite, that react-router-dom 6->7
+    # changes the routing API, or that the pinned scientific wheels do not yet
+    # reach the newest Python -- so each major arrives as its own PR that would
+    # break the build if merged. Majors get done by hand, on purpose.
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
   - package-ecosystem: npm
     directory: /frontend
     schedule:
@@ -22,12 +30,37 @@ updates:
         patterns: ["*"]
         update-types: ["minor", "patch"]
 
+    # Major bumps are excluded deliberately. Dependabot cannot know that
+    # tailwindcss 3->4 is a config-format rewrite, that react-router-dom 6->7
+    # changes the routing API, or that the pinned scientific wheels do not yet
+    # reach the newest Python -- so each major arrives as its own PR that would
+    # break the build if merged. Majors get done by hand, on purpose.
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: monthly
 
+    # Major bumps are excluded deliberately. Dependabot cannot know that
+    # tailwindcss 3->4 is a config-format rewrite, that react-router-dom 6->7
+    # changes the routing API, or that the pinned scientific wheels do not yet
+    # reach the newest Python -- so each major arrives as its own PR that would
+    # break the build if merged. Majors get done by hand, on purpose.
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
   - package-ecosystem: docker
     directory: /backend
     schedule:
       interval: monthly
+
+    # Major bumps are excluded deliberately. Dependabot cannot know that
+    # tailwindcss 3->4 is a config-format rewrite, that react-router-dom 6->7
+    # changes the routing API, or that the pinned scientific wheels do not yet
+    # reach the newest Python -- so each major arrives as its own PR that would
+    # break the build if merged. Majors get done by hand, on purpose.
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
