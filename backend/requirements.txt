@@ -14,14 +14,14 @@
 # Tested on Python 3.10 and 3.14. Requires 3.10+.
 
 # --- Pure Python: exact pins --------------------------------------------
-fastapi==0.140.13
-uvicorn[standard]==0.34.0
+fastapi==0.141.1
+uvicorn[standard]==0.52.1
 sqlalchemy==2.0.51
 pydantic==2.13.4
-pydantic-settings==2.7.0
-python-multipart==0.0.20
-anthropic==0.120.2
-python-dotenv==1.0.1
+pydantic-settings==2.15.0
+python-multipart==0.0.32
+anthropic==0.121.0
+python-dotenv==1.2.2
 
 # --- Compiled: ranged so pip picks a wheel for the running Python --------
 # 2.9.11 is the first release with cp314 wheels.
