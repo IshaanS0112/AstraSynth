@@ -1,4 +1,4 @@
-FROM python:3.12-slim
+FROM python:3.14-slim
 
 # opencv-python-headless still links libGL-free, but numpy/opencv wheels need
 # libgomp at runtime. Installing it explicitly keeps the image slim while
