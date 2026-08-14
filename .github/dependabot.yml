@@ -1,4 +1,15 @@
 version: 2
+
+# Two policies applied to every ecosystem below:
+#
+#   groups  - minor and patch bumps arrive as one PR per ecosystem rather than
+#             one per package.
+#
+#   ignore  - major bumps are excluded. Dependabot cannot know that
+#             tailwindcss 3->4 is a config-format rewrite, that
+#             react-router-dom 6->7 changes the routing API, or that the pinned
+#             scientific wheels do not yet reach the newest Python image. Each
+#             arrived as its own unmergeable PR. Majors are done by hand.
 updates:
   - package-ecosystem: pip
     directory: /backend
