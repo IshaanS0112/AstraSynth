@@ -27,7 +27,7 @@ python-dotenv==1.0.1
 # 2.9.11 is the first release with cp314 wheels.
 psycopg2-binary>=2.9.11,<3
 # 2.3.2 is the first with cp314 wheels; <3 keeps the numpy 2.x API.
-numpy>=2.2,<3
+numpy>=2.5.2,<3
 # Ships cp37-abi3 wheels, so one wheel covers every Python 3.7+.
 # macOS wheels require macOS 13+.
 opencv-python-headless>=4.10,<5
