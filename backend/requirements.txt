@@ -15,13 +15,13 @@
 
 # --- Pure Python: exact pins --------------------------------------------
 fastapi==0.141.1
-uvicorn[standard]==0.52.1
-sqlalchemy==2.0.51
-pydantic==2.13.4
+uvicorn[standard]==0.52.4
+sqlalchemy==2.0.52
+pydantic==2.13.5
 pydantic-settings==2.15.0
 python-multipart==0.0.32
-anthropic==0.121.0
-python-dotenv==1.2.2
+anthropic==0.125.0
+python-dotenv==1.2.3
 
 # --- Compiled: ranged so pip picks a wheel for the running Python --------
 # 2.9.11 is the first release with cp314 wheels.
