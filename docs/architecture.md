@@ -21,10 +21,11 @@
 ```
 React + TypeScript                FastAPI
 ┌──────────────────┐             ┌────────────────────────────────────────┐
-│ TerrainViewer    │◄───────────►│ routers/  (thin: validate → delegate)   │
-│ HazardOverlay    │   REST      │            ↓                            │
-│ PathVisualization│             │ services/mission_pipeline.py            │
-│ RiskReportView   │             │   ├─ terrain_analyzer   OpenCV          │
+│ MissionControl   │◄───────────►│ routers/  (thin: validate → delegate)   │
+│  three/Terrain   │   REST      │            ↓                            │
+│  panels · charts │             │ services/autonomy.py   V3 orchestration │
+│ TerrainViewer    │             │ services/mission_pipeline.py            │
+│ HazardOverlay    │             │   ├─ terrain_analyzer   OpenCV          │
 └──────────────────┘             │   ├─ hazard_mapper      weighted score  │
                                   │   ├─ path_planner       A*              │
                                   │   ├─ risk_engine        arithmetic      │
@@ -226,6 +227,12 @@ Written after building and testing, not before.
 **10. Bayesian belief updates made every step a replan.** With a noisy sensor, re-observing a cell shifts its posterior mean slightly, so `BeliefState.update` reported a change on essentially every cell in range on every step — 65 D* Lite repairs over a 64-step traverse. Nothing was wrong: the repairs were genuine and each cost about six vertex expansions. But "replans: 65" is a useless number for an operator, because 62 of those repairs confirmed the existing route. Added a `rerouted` flag comparing the next step before and after each repair, and reported `reroutes` separately. **A metric that counts work done is not the same as a metric that counts decisions changed, and only the second one belongs in an event log.**
 
 **11. Uncertainty propagation exceeded the range of the thing it described.** The obstacle-proximity term is bounded to [0, 1], and first-order propagation gave it a standard deviation of 2.0 right on an obstacle edge — because the derivative of `1/(1+d)` is `−1/(1+d)²`, which is large at `d = 0`, and linear propagation has no idea the quantity is bounded. Clipped every component σ to 0.5, the maximum standard deviation a [0,1]-bounded variable can have. **The clip is not a cosmetic cap: it is the point where the linear approximation stops being valid, and it belongs in the output as a stated assumption rather than in a comment.**
+
+**12. The API told the client a range its own data fell outside.** `GET /terrain-grid` ships each layer rounded — elevation to 3 decimals, hazard to 4 — and shipped a `ranges` block computed from the *unrounded* arrays. A rounded minimum can sit below the true minimum, so a renderer normalising a layer by its stated range produces a value outside `[0, 1]` for the one cell at the extreme, and an out-of-gamut colour. Caught by a test asserting the obvious invariant — that the range bounds the data beside it — which is exactly the kind of assertion that looks too trivial to write. Fixed by rounding first and deriving the ranges from the arrays that are actually sent. **A payload and the metadata describing it have to be computed from the same values, not from the same source values.**
+
+**13. Two interfaces with one name silently became one impossible type.** The V3 frontend types introduced `export interface Waypoint { x, y }` into a module that already exported a `Waypoint` with `segment_id`, `hazard_score`, `slope_deg` and three more fields. TypeScript does not reject that: it *merges* same-named interfaces, so the result was a single type requiring every field of both, and the error surfaced somewhere else entirely — a `{x, y}` literal reported as "missing 6 properties". Renamed to `GridPoint`. **Declaration merging is a feature; in a module you are appending to, it is a trap, and a duplicate-name collision does not announce itself where you made it.**
+
+**14. `filterwarnings = error` broke the whole API suite on someone else's release.** Every API test errored on collection with `DeprecationWarning: The anyio.abc.BlockingPortal alias is deprecated` — raised inside Starlette's `TestClient` import, from a transitive dependency nothing here pins. The policy that makes warnings useful (our own deprecations fail the build) had made an unrelated upstream release fail it too. Fixed with a single exemption that names the library, the alias and the reason, above `error::DeprecationWarning` rather than instead of it. **A blanket `error` on warnings you do not control is a scheduled outage; the fix is a narrow, annotated exemption, not turning the policy off.**
 
 **8. Exact pins on compiled packages broke the install on a newer Python.**
 `requirements.txt` pinned `psycopg2-binary==2.9.10` and `numpy==2.2.6` - the exact versions the suite was validated against. On Python 3.14 neither has a wheel, so pip fell back to building psycopg2 from source and died on `pg_config executable not found`, taking the whole install with it. An exact pin on a package with compiled extensions doesn't just pin the version, it implicitly pins the set of Python versions that release published wheels for. Now: pure-Python dependencies are pinned exactly for reproducibility, compiled ones get a floor (the first release with wheels for the newest supported Python) and a major-version ceiling. The install is verified against Python 3.10, 3.12 and 3.14 with `pip download --only-binary=:all: --python-version ...`, which resolves wheels without installing anything.

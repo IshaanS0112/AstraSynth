@@ -12,6 +12,7 @@ from app.enums import MissionStatus
 if TYPE_CHECKING:  # avoids a circular import at runtime
     from app.models.path import RoverPath
     from app.models.report import MissionRiskReport
+    from app.models.v3 import Experiment, ScienceTarget, TraverseRun
 
 
 class Mission(Base):
@@ -35,6 +36,21 @@ class Mission(Base):
         cascade="all, delete-orphan",
         order_by="MissionRiskReport.generated_at",
     )
+    science_targets: Mapped[list["ScienceTarget"]] = relationship(
+        back_populates="mission",
+        cascade="all, delete-orphan",
+        order_by="ScienceTarget.created_at",
+    )
+    traverse_runs: Mapped[list["TraverseRun"]] = relationship(
+        back_populates="mission",
+        cascade="all, delete-orphan",
+        order_by="TraverseRun.created_at",
+    )
+    experiments: Mapped[list["Experiment"]] = relationship(
+        back_populates="mission",
+        cascade="all, delete-orphan",
+        order_by="Experiment.created_at",
+    )
 
 
 class TerrainAnalysis(Base):
@@ -46,6 +62,7 @@ class TerrainAnalysis(Base):
     obstacle_contours: Mapped[list | None] = mapped_column(JSONB)
     terrain_classification: Mapped[str | None] = mapped_column(String(50))
     hazard_heatmap_path: Mapped[str | None] = mapped_column(String(500))
+    uncertainty_map_path: Mapped[str | None] = mapped_column(String(500))
     # Auditability: the exact parameters + aggregate statistics behind this run.
     analysis_metadata: Mapped[dict | None] = mapped_column(JSONB)
     analyzed_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())

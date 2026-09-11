@@ -13,7 +13,17 @@ from sqlalchemy import select
 from app.config import get_settings
 from app.db.session import Base, SessionLocal, engine
 from app.models import RoverConfig
-from app.routers import missions, paths, reports, risk, rover_configs, terrain
+from app.routers import (
+    experiments,
+    missions,
+    paths,
+    reports,
+    risk,
+    rover_configs,
+    science,
+    simulation,
+    terrain,
+)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger("astrasynth")
@@ -73,11 +83,12 @@ settings = get_settings()
 
 app = FastAPI(
     title="AstraSynth API",
-    version="1.0.0",
+    version="1.1.0",
     description=(
-        "AI-assisted planetary mission intelligence. Terrain hazard analysis, "
-        "energy-aware A* path planning, and battery-feasibility risk assessment. "
-        "All risk figures are computed deterministically; the LLM only narrates them."
+        "Planetary mission autonomy. Terrain perception with propagated uncertainty, "
+        "four route planners over one cost model, multi-rover deconfliction, and "
+        "traverse simulation against terrain the rover can only partly see. "
+        "All figures are computed deterministically; the LLM only narrates them."
     ),
     lifespan=lifespan,
 )
@@ -92,7 +103,17 @@ app.add_middleware(
 
 app.mount("/static", StaticFiles(directory=str(settings.storage_dir)), name="static")
 
-for module in (missions, terrain, paths, risk, reports, rover_configs):
+for module in (
+    missions,
+    terrain,
+    paths,
+    risk,
+    reports,
+    rover_configs,
+    science,
+    simulation,
+    experiments,
+):
     app.include_router(module.router)
 
 

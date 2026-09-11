@@ -3,12 +3,16 @@
 Planetary mission autonomy: terrain perception under uncertainty, four route planners over one cost model, multi-rover deconfliction, and mission-level simulation of what a rover actually knows.
 
 [![CI](https://github.com/IshaanS0112/AstraSynth/actions/workflows/ci.yml/badge.svg)](https://github.com/IshaanS0112/AstraSynth/actions/workflows/ci.yml)
-[![Tests](https://img.shields.io/badge/tests-210%20passing-brightgreen)](backend/tests)
+[![Tests](https://img.shields.io/badge/tests-238%20passing-brightgreen)](backend/tests)
 [![Python](https://img.shields.io/badge/python-3.10%20%7C%203.13-blue)](backend/requirements.txt)
 [![Ruff](https://img.shields.io/badge/lint-ruff-261230)](backend/pyproject.toml)
 [![License](https://img.shields.io/badge/license-MIT-yellow)](LICENSE)
 
-`FastAPI` · `OpenCV` · `PostgreSQL` · `React + TypeScript` · `Docker`
+`FastAPI` · `OpenCV` · `PostgreSQL` · `React + TypeScript` · `three.js` · `Docker`
+
+![Mission control: 3-D terrain coloured by hazard, the executed route diverging from the plan, live telemetry, and the D* Lite repair log](docs/images/mission-control.png)
+
+<p align="center"><sub>Mission control, mid-traverse. The rover is 59% along a route it is repairing as it drives — 197 D* Lite repairs so far, 19 of which actually changed where it is going. More in <a href="docs/gallery.md">the gallery</a>.</sub></p>
 
 ---
 
@@ -269,10 +273,10 @@ The global product is ~11 GB, so the script reads a window out of a file you've 
 cd backend && python -m pytest -v
 ```
 
-**210 tests.** 204 need no network and no database; the remaining 6 drive the
-full HTTP pipeline against PostgreSQL and skip automatically if none is
-reachable. CI runs all 210 against a service container and fails the build if
-the database-backed ones are silently skipped.
+**238 tests.** 204 need no network and no database; the remaining 34 drive the
+full HTTP surface against PostgreSQL and skip automatically if none is reachable.
+CI runs all 238 against a service container and fails the build if the
+database-backed ones are silently skipped.
 
 Coverage by claim:
 
@@ -312,11 +316,27 @@ The API tests need PostgreSQL because the schema uses `JSONB` and native `UUID`,
 | `GET` | `/missions/{id}/ai-report` | Generated narrative |
 | `GET` `POST` | `/rover-configs` | List / create rover configurations |
 
-The V3 engines — Theta\*, D\* Lite, CBS, the Pareto sweep, traverse simulation
-and Monte Carlo — are **not yet exposed over HTTP**. They are reachable from
-Python and from `scripts/run_mission_demo.py`. See
-[`docs/v3_roadmap.md`](docs/v3_roadmap.md) for why the backend went first and
-what the API and UI phases look like.
+### Mission autonomy
+
+| Method | Endpoint | |
+|---|---|---|
+| `GET` | `/missions/{id}/terrain-grid` | Elevation, hazard, uncertainty, slope and lethal layers for the 3-D view |
+| `GET` `POST` `DELETE` | `/missions/{id}/science-targets` | Objectives, in image-pixel coordinates |
+| `POST` | `/missions/{id}/simulate-traverse` | Drive it without knowing the terrain; D\* Lite repairs as the rover discovers |
+| `GET` | `/missions/{id}/traverses` · `/traverses/{run}` | Run summaries / a full run |
+| `GET` | `/missions/{id}/traverses/{run}/events` | Mission event log, filterable by category and kind |
+| `POST` | `/missions/{id}/route-study` | Sweep the objective weights; return the Pareto front |
+| `POST` | `/missions/{id}/monte-carlo` | Seeded robustness study |
+| `POST` | `/missions/{id}/fleet-plan` | CBS deconfliction over a heterogeneous fleet |
+| `POST` | `/missions/{id}/science-tour` | Target selection under energy, time and instrument budgets |
+| `GET` | `/missions/{id}/experiments` · `/experiments/{id}` | Every study, with its seed and code revision |
+
+A failed *mission* is a `200` with `status: FAILED` and a diagnosed
+`failure_mode` — "these rovers cannot be deconflicted inside this budget" is a
+finding worth storing, not a broken request. A failed *request* is still a 4xx.
+
+Studies run synchronously, so their size is bounded in the schema rather than
+left to time out. See [`docs/v3_roadmap.md`](docs/v3_roadmap.md).
 
 ---
 
@@ -349,7 +369,11 @@ backend/app/services/
     science.py             Orienteering-style target selection under budget
     scheduling.py          Activity timeline
 backend/tests/             210 tests
-frontend/src/              V1 dashboard (V3 engines not yet wired to it)
+frontend/src/
+  three/TerrainScene.ts    The 3-D renderer: plain class, no React, four setters
+  mission-control/         3-D wrapper · console panels · Pareto and robustness charts
+  pages/MissionControl.tsx Mission control: terrain dominant, panels drill down
+  pages/                   Dashboard · MissionDetail · NewMission (the classic flow)
 scripts/
   generate_terrain.py      Synthetic fractal terrain with craters and rock fields
   prepare_usgs_terrain.py  Crop real USGS Mars DEM tiles
@@ -357,11 +381,14 @@ scripts/
   run_mission_demo.py      Full V3 mission, end to end
   benchmark_planner.py     A* vs Dijkstra
   benchmark_v3.py          Theta* · D* Lite · CBS · Pareto · Monte Carlo · comms
+  check_mission_control.mjs Drives the 3-D view in a real browser (not in CI)
 docs/
   architecture.md          Design decisions · real vs simulated · bugs found
   planners.md              Four planners, their guarantees, and their limits
   uncertainty.md           Reality vs belief vs observation · propagation · Monte Carlo
   mission_model.md         Science · communications · scheduling · failure modes
+  frontend.md              Why the renderer is not a React component; layers; playback
+  gallery.md               Screenshots from a real run, with what each one shows
   v3_roadmap.md            What was audited, what was built, what is not built yet
 ```
 
@@ -397,9 +424,11 @@ rather than the README.
 - [x] Multi-objective routing and a Pareto front
 - [x] Communication-aware route evaluation and mission scheduling
 - [x] Monte Carlo mission robustness, reproducible from one seed
-- [ ] HTTP API over the V3 engines, and persistence for missions and experiments
-- [ ] Mission-control frontend: 3D terrain, layer toggles, replan animation, event stream
-- [ ] Scenario builder and experiment lab
+- [x] HTTP API over the V3 engines, with persistence and experiment provenance
+- [x] Mission-control frontend: 3D terrain, layer toggles, traverse replay, event log
+- [x] Scenario building (click the terrain to place targets) and a robustness lab
+- [ ] Background job queue, so a study can outlive a request
+- [ ] Communications coverage as a map layer
 - [ ] Active exploration — moving somewhere purely to reduce uncertainty
 - [ ] CNN terrain classifier compared head-to-head against the rule-based one
 

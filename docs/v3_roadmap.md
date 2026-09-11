@@ -75,65 +75,91 @@ numbers (3,273 / 13,331 / 24,431 / 41,280 node expansions, unchanged).
 | 13 | Traverse simulation, event log | **Done** |
 | 14 | Monte Carlo robustness | **Done** |
 | 15 | Rover digital twin (payload, speed) | **Partial** — energy and duration model; no thermal, no slip model |
-| 16 | Benchmarks and validation | **Done** — `scripts/benchmark_v3.py`, 209 tests |
-| 17 | **API surface for the new engines** | **Not started** |
-| 18 | **Persistence for missions/experiments** | **Not started** |
-| 19 | **Mission-control frontend redesign** | **Not started** |
-| 20 | **3D terrain visualisation** | **Not started** |
-| 21 | **Scenario builder, experiment lab UI** | **Not started** |
+| 16 | Benchmarks and validation | **Done** — `scripts/benchmark_v3.py` |
+| 17 | HTTP API over the V3 engines | **Done** |
+| 18 | Persistence for science targets, traverses, experiments | **Done** |
+| 19 | Mission-control frontend | **Done** |
+| 20 | 3-D terrain visualisation with layer toggles | **Done** |
+| 21 | Scenario building and experiment lab | **Done** |
 | 22 | Active exploration (information gain) | **Not started** — abstraction exists, policy does not |
+| 23 | Background job queue for long studies | **Not started** — studies run synchronously and are capped |
+| 24 | Live telemetry transport (SSE/WebSocket) | **Not needed yet** — see below |
+| 25 | CNN terrain classifier vs the rule-based one | **Not started** |
 
-Items 17–21 are the honest gap. Everything computed by items 1–16 is reachable
-today from Python and from `scripts/run_mission_demo.py`; none of it is reachable
-from the browser. The V1 dashboard still works and still shows V1 results.
+238 tests, zero skipped, across the analysis engines and the full HTTP surface.
+
+---
+
+## What Phases 17–21 turned out to be
+
+**The API is thin, and stayed thin.** `services/autonomy.py` holds the ordering
+rules and the persistence; the routers validate and serialise. The one thing this
+layer had to decide for itself is where ground truth comes from: every engine that
+*executes* rather than *plans* needs terrain to execute against, and a real mission
+does not have one — that is the entire point of the belief model. So truth is
+synthesised from a recorded seed, and the response says so in
+`parameters.truth_model` rather than letting a reader assume the terrain was
+measured.
+
+**No migration tool yet, deliberately.** The three new tables are *new*, not
+alterations, so V1's `create_all` still covers the schema and Alembic would be
+ceremony. The note in `architecture.md` stands: the first column that changes shape
+is what buys a migration tool.
+
+**Long studies are capped rather than queued.** Monte Carlo runs on the request
+thread, so `schemas/v3.py` bounds the trial count and CBS carries a wall-clock
+budget as well as a node budget. Accepting a thousand-trial study synchronously
+would trade a clear 422 for a silent gateway timeout. A job queue is Phase 23, and
+until it exists the cap is the honest interface.
+
+**Telemetry did not need a transport.** The traverse completes on the server and
+returns a full run — the executed path plus a timestamped event log — so the UI
+replays rather than streams. Server-sent events buy nothing until a mission runs
+longer than a request, which is the same condition that buys the job queue.
+
+**Fleet coordination runs on a coarser grid than navigation.** The low-level CBS
+state space is cells × ticks, so halving the resolution cuts it by roughly eight.
+Nothing that matters is lost: the coordination question is who crosses the middle
+first, not which rock to pass on the left, and the second is answered by D* Lite at
+full resolution once each rover is driving its own leg.
+
+**The renderer is not a React component.** `three/TerrainScene.ts` is a plain class
+with four setters. See [`frontend.md`](frontend.md) for why, and for what CI checks
+versus what `scripts/check_mission_control.mjs` checks.
 
 ---
 
 ## Why the backend went first
 
-The frontend redesign is the larger piece of work by wall-clock time and the
-smaller piece by risk. A 3D mission-control interface built over engines that
-don't exist yet is a mock; built over engines that do, it is a view. Doing it in
-the other order would have produced screenshots and no substance.
+The frontend redesign was the larger piece by wall-clock time and the smaller
+piece by risk. A 3-D mission-control interface built over engines that don't exist
+is a mock; built over engines that do, it is a view.
 
-There is also a concrete dependency: the UI the brief describes — hazard layers,
-uncertainty layers, replan animation, Pareto scatter linked to the 3D map,
-per-rover telemetry, a mission event stream — is a *view over data structures*.
-Those structures now exist and are stable (`TraverseResult`, `MissionEvent`,
-`CBSSolution`, the Pareto sweep dictionary, `Timeline`). Building the API and the
-UI against settled shapes is straightforward; building them against shapes still
-in flux is rework.
+The dependency was concrete. Everything the UI shows — hazard layers, uncertainty
+layers, repair events, a Pareto scatter linked to the map, per-rover telemetry — is
+a *view over data structures*. Building against `TraverseResult`, `MissionEvent`,
+`CBSSolution`, the sweep dictionary and `Timeline` once they were settled was
+straightforward. Building against them while they moved would have been rework.
 
 ---
 
-## What comes next, in order
+## What is still missing
 
-**Phase A — API surface.** Endpoints over the existing engines:
-`POST /missions/{id}/plan-multi-objective`, `POST /missions/{id}/simulate-traverse`,
-`GET /missions/{id}/events`, `POST /missions/{id}/deconflict`,
-`POST /experiments` (Monte Carlo). Persistence for `Mission`, `ScienceTarget`,
-`Experiment`. Alembic, since the schema stops being append-only here.
+**Active exploration.** Choosing to drive somewhere purely to reduce uncertainty,
+rather than because it is on the way. The belief machinery supports it —
+`planning_hazard(k)` already prices unknown ground — but there is no policy that
+values information for its own sake.
 
-**Phase B — telemetry transport.** The event log is already timestamped and
-typed; server-sent events over `GET /missions/{id}/events` is enough. Sending the
-full terrain grid through React state on every tick is the thing to avoid —
-terrain is static and cached, only rover state is dynamic.
+**A job queue.** Until one exists, a study has to finish inside a request, which is
+why the trial count is capped and CBS has a wall-clock budget.
 
-**Phase C — 3D terrain view.** One renderer, not several. The existing frontend
-is React + TypeScript with no 3D dependency, so this is an addition rather than a
-migration. The renderer must stay separate from planning logic.
+**Communications in the UI.** The engine computes coverage, blackout fraction and
+longest blackout; the 3-D view does not yet draw a coverage layer or a relay
+marker.
 
-**Phase D — mission-control layout.** 3D view dominant, telemetry and event log
-in drill-down panels, layer toggles for elevation / slope / hazard / uncertainty
-/ communications / science / planned route / executed route.
-
-**Phase E — replan visualisation.** The hero interaction: obstacle detected →
-belief updated → affected region highlighted → old route fades → new route
-appears, with the repair's own numbers beside it. Every one of those quantities is
-already in `MissionEvent.detail`.
-
-**Phase F — scenario builder and experiment lab.** Both are forms over existing
-dataclasses; neither needs new engine work.
+**A CNN terrain classifier** compared head-to-head against the rule-based one.
+Still blocked on the same thing as in V1: there is no labelled planetary terrain
+set here to train on, and the interesting output would be the comparison.
 
 ---
 

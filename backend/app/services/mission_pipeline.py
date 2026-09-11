@@ -78,8 +78,16 @@ def run_terrain_analysis(db: Session, mission: Mission, settings: Settings) -> T
     elevation_grid, _ = hazard_mapper.downsample_for_planning(
         analysis.elevation_m.astype(np.float32), settings.planning_grid_max_dim
     )
+    uncertainty_grid, _ = hazard_mapper.downsample_for_planning(
+        hazard.uncertainty, settings.planning_grid_max_dim
+    )
     arrays_path = directory / "analysis.npz"
-    np.savez_compressed(arrays_path, hazard_grid=hazard_grid, elevation_grid=elevation_grid)
+    np.savez_compressed(
+        arrays_path,
+        hazard_grid=hazard_grid,
+        elevation_grid=elevation_grid,
+        uncertainty_grid=uncertainty_grid,
+    )
 
     metadata = {
         **analysis.stats,
@@ -98,8 +106,13 @@ def run_terrain_analysis(db: Session, mission: Mission, settings: Settings) -> T
         row = TerrainAnalysisRow(mission_id=mission.id)
         db.add(row)
 
+    uncertainty_map_path = hazard_mapper.render_uncertainty_map(
+        hazard, directory / "uncertainty_map.png"
+    )
+
     row.slope_map_path = slope_map_path
     row.hazard_heatmap_path = heatmap_path
+    row.uncertainty_map_path = uncertainty_map_path
     row.terrain_classification = analysis.classification.value
     row.obstacle_contours = [o.as_dict() for o in analysis.obstacles]
     row.analysis_metadata = metadata
@@ -111,6 +124,22 @@ def run_terrain_analysis(db: Session, mission: Mission, settings: Settings) -> T
 
 
 def load_planning_grids(analysis_row: TerrainAnalysisRow) -> tuple[np.ndarray, np.ndarray, float]:
+    hazard_grid, elevation_grid, _, scale = load_planning_arrays(analysis_row)
+    return hazard_grid, elevation_grid, scale
+
+
+def load_planning_arrays(
+    analysis_row: TerrainAnalysisRow,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, float]:
+    """Hazard, elevation, hazard-uncertainty and the downsample scale.
+
+    ``uncertainty_grid`` was added after V1, so an ``analysis.npz`` written by
+    an older run will not contain it. Rather than failing on a mission that was
+    analysed before the column existed, a zero field is returned - which is
+    exactly the "no uncertainty modelled" behaviour V1 had, and makes
+    ``uncertainty_weight`` a no-op on that mission instead of an error. Re-running
+    the analysis produces the real field.
+    """
     metadata = analysis_row.analysis_metadata or {}
     arrays_path = metadata.get("arrays_path")
     if not arrays_path or not Path(arrays_path).exists():
@@ -120,8 +149,13 @@ def load_planning_grids(analysis_row: TerrainAnalysisRow) -> tuple[np.ndarray, n
     with np.load(arrays_path) as data:
         hazard_grid = data["hazard_grid"]
         elevation_grid = data["elevation_grid"]
+        uncertainty_grid = (
+            data["uncertainty_grid"]
+            if "uncertainty_grid" in data.files
+            else np.zeros_like(hazard_grid)
+        )
     scale = float(metadata["planning_grid"]["downsample_scale"])
-    return hazard_grid, elevation_grid, scale
+    return hazard_grid, elevation_grid, uncertainty_grid, scale
 
 
 # --- Stage 2: path planning -------------------------------------------------
@@ -290,6 +324,7 @@ def run_report_generation(
 __all__ = [
     "PathNotFoundError",
     "PipelineError",
+    "load_planning_arrays",
     "load_planning_grids",
     "rehydrate_path",
     "resolve_path",

@@ -1,9 +1,17 @@
+import type { GridPoint } from "./types";
 import type {
+  Experiment,
+  ExperimentSummary,
   Mission,
+  MissionEvent,
   RiskReport,
   RoverConfig,
   RoverPath,
+  ScienceTarget,
   TerrainAnalysis,
+  TerrainGrid,
+  TraverseRun,
+  TraverseRunSummary,
 } from "./types";
 
 // In dev, Vite proxies /api -> :8000. In the Docker image, nginx does the same.
@@ -84,4 +92,112 @@ export const api = {
     request<RiskReport>(`/missions/${id}/generate-report`, { method: "POST" }),
 
   listRoverConfigs: () => request<RoverConfig[]>("/rover-configs"),
+
+  // --- V3: mission autonomy -------------------------------------------------
+
+  /** Every per-cell layer in one call - they are rendered and toggled together. */
+  getTerrainGrid: (id: string, maxDim = 96) =>
+    request<TerrainGrid>(`/missions/${id}/terrain-grid?max_dim=${maxDim}`),
+
+  listScienceTargets: (id: string) =>
+    request<ScienceTarget[]>(`/missions/${id}/science-targets`),
+  createScienceTarget: (
+    id: string,
+    body: {
+      label: string;
+      x: number;
+      y: number;
+      value?: number;
+      priority?: string;
+      required_instrument?: string | null;
+    },
+  ) =>
+    request<ScienceTarget>(`/missions/${id}/science-targets`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  deleteScienceTarget: (id: string, targetId: string) =>
+    request<void>(`/missions/${id}/science-targets/${targetId}`, { method: "DELETE" }),
+
+  simulateTraverse: (
+    id: string,
+    body: {
+      start: GridPoint;
+      goal: GridPoint;
+      rover_config_id: string;
+      seed?: number;
+      uncertainty_weight?: number;
+      unmapped_obstacles?: number;
+      energy_budget_kwh?: number | null;
+    },
+  ) =>
+    request<TraverseRun>(`/missions/${id}/simulate-traverse`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  listTraverses: (id: string) => request<TraverseRunSummary[]>(`/missions/${id}/traverses`),
+  getTraverse: (id: string, runId: string) =>
+    request<TraverseRun>(`/missions/${id}/traverses/${runId}`),
+  getTraverseEvents: (id: string, runId: string, category?: string) =>
+    request<MissionEvent[]>(
+      `/missions/${id}/traverses/${runId}/events${category ? `?category=${category}` : ""}`,
+    ),
+
+  routeStudy: (id: string, body: { start: GridPoint; goal: GridPoint; rover_config_id: string }) =>
+    request<Experiment>(`/missions/${id}/route-study`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  monteCarlo: (
+    id: string,
+    body: {
+      start: GridPoint;
+      goal: GridPoint;
+      rover_config_id: string;
+      trials: number;
+      seed: number;
+      uncertainty_weight?: number;
+    },
+  ) =>
+    request<Experiment>(`/missions/${id}/monte-carlo`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  fleetPlan: (
+    id: string,
+    body: {
+      assignments: {
+        label: string;
+        rover_config_id: string;
+        start: GridPoint;
+        goal: GridPoint;
+      }[];
+      time_budget_seconds?: number;
+    },
+  ) =>
+    request<Experiment>(`/missions/${id}/fleet-plan`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  scienceTour: (
+    id: string,
+    body: {
+      start: GridPoint;
+      rover_config_id: string;
+      instruments: string[];
+      energy_budget_kwh?: number | null;
+      relay_at?: GridPoint | null;
+    },
+  ) =>
+    request<Experiment>(`/missions/${id}/science-tour`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
+  listExperiments: (id: string, kind?: string) =>
+    request<ExperimentSummary[]>(
+      `/missions/${id}/experiments${kind ? `?kind=${kind}` : ""}`,
+    ),
+  getExperiment: (id: string, experimentId: string) =>
+    request<Experiment>(`/missions/${id}/experiments/${experimentId}`),
 };
