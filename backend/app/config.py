@@ -57,6 +57,17 @@ class Settings(BaseSettings):
     sandy_plain_max_roughness: float = 0.12
     sandy_plain_max_area_fraction: float = 0.10
 
+    # --- Hazard uncertainty -------------------------------------------------
+    # Uncertainty is propagated, not invented: each hazard component gets a
+    # standard deviation derived from a known error source, and they combine by
+    # the usual quadrature rule for a weighted sum. See hazard_mapper.py.
+    dem_quantisation_levels: int = 256  # 8-bit DEM: elevation_range_m / 256 per level
+    obstacle_position_sigma_px: float = 1.0  # Canny edge localisation, in pixels
+    # How many standard deviations of hazard uncertainty a planner is charged.
+    # 0 reproduces V1 exactly; 1.5 makes unsurveyed ground cost meaningfully more
+    # than equally-hazardous surveyed ground.
+    uncertainty_planning_weight: float = 0.0
+
     # --- Path planning ------------------------------------------------------
     planning_grid_max_dim: int = 192  # hazard map is downsampled to this for A*
     energy_slope_coefficient: float = 0.5  # k in energy_factor = 1 + k*|slope|

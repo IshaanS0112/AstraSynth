@@ -156,3 +156,12 @@ jobs:
             --rover survey --compare-dijkstra
       - name: A* must expand fewer nodes than Dijkstra at equal cost
         run: python scripts/benchmark_planner.py --grid 64 128 --repeats 1
+
+      - name: Full V3 mission - terrain, science, comms, replanning, fleet, Monte Carlo
+        # Exercises every V3 engine together on real generated terrain. The unit
+        # suite checks each in isolation; this is what catches a change that
+        # breaks them only in combination.
+        run: python scripts/run_mission_demo.py --size 192 --planning-dim 48 --trials 8
+
+      - name: V3 planner benchmarks
+        run: python scripts/benchmark_v3.py --grid 48 --repeats 1 --trials 8
