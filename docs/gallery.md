@@ -28,6 +28,78 @@ change in cost-to-goal.
 
 ---
 
+## The analysis chain
+
+![Orbital DEM, slope, hazard and uncertainty](images/analysis-pipeline.png)
+
+Four stages over one tile, all four written to `storage/<mission>/` by
+`POST /analyze-terrain`. Slope is Sobel over the elevation model; hazard is the
+weighted blend; uncertainty is 1σ propagated in quadrature from DEM
+quantisation, Canny edge localisation and window sampling.
+
+The uncertainty panel is worth a second look, because it is nearly bimodal —
+bright at and inside crater rims, dark on the plains. That is not a rendering
+artefact: the obstacle-proximity term's σ goes as `1/(1+d)²` and dominates the
+quadrature sum near an obstacle while collapsing to almost nothing away from
+one. The field really is concentrated. The colour scale saturates at the 99th
+percentile of the field rather than a fixed constant, and the value used is
+recorded in `analysis_metadata.uncertainty_map_scale` — a colour map whose scale
+is not written down is not a measurement.
+
+---
+
+## The same ground, four ways
+
+![Hazard, uncertainty, slope and elevation layers](images/terrain-layers.png)
+
+Same terrain, same camera, same route. Switching layers rewrites a colour
+attribute; it does not rebuild the mesh.
+
+Untraversable ground is marked on **every** layer, not only the hazard one — an
+operator reading the slope map still needs to see where the rover cannot go, and
+making them infer it from another tab is how a route gets approved across a
+crater rim.
+
+Relief is drawn to true scale: one metre of rise is the same length as one metre
+across. Exaggeration is a labelled 1×/2×/4× control rather than a default,
+because a slope layer is only trustworthy at true scale and 40 m of relief across
+a 1 km tile is nearly invisible at it.
+
+---
+
+## A repair, unpacked
+
+![Event detail showing the causal chain of a D* Lite repair](images/replan-detail.png)
+
+Clicking a repair in the event log reconstructs what happened, in order: the
+sensor observed 78 cells that disagreed with the belief, the belief map was
+updated, D* Lite repaired 8 vertices, and a new route was committed. Underneath,
+the raw record — `rerouted`, `cost_delta`, `cost_to_goal`, `trigger_cells`,
+`vertices_expanded`.
+
+Eight vertices. A fresh A* from that position on that map expands thousands. That
+ratio is the entire argument for incremental replanning, and it is visible here
+per repair rather than asserted in a README.
+
+---
+
+## Fleet deconfliction
+
+![Three rovers deconflicted by CBS](images/fleet.png)
+
+Three rovers, three different graphs over the same terrain — each carries its own
+slope limit, so a ridge the Heavy Lab crosses is a wall to the Scout. CBS
+branches in the space of constraints rather than the joint state space.
+
+The panel reports the constraint-tree node count and, separately, that the
+solution was **verified conflict-free** — by an independent check over the
+returned routes, not by the solver's own report. Coordination runs on a coarser
+grid than navigation, deliberately: the low-level state space is cells × ticks,
+and the question being answered is who crosses the middle first, not which rock
+to pass on the left.
+
+---
+
 ## Route study — the trade-off surface
 
 ![Route study](images/route-study.png)
@@ -61,6 +133,16 @@ sized against — and the failures are broken down by mode, because "it failed" 
 
 Same seed, same numbers. Trial *k* does not depend on how many trials were run, so
 a study can be extended without invalidating what came before.
+
+---
+
+## Top-down
+
+![Top-down view of the hazard layer with the executed route](images/top-down.png)
+
+The camera presets — three-quarter, top, orbit — exist because the three-quarter
+view that reads best for landform reads worst for *route geometry*. Top-down is
+where you check whether a detour actually went around the thing it was avoiding.
 
 ---
 

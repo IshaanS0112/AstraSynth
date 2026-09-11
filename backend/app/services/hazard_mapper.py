@@ -243,9 +243,21 @@ def build_hazard_map(analysis: TerrainAnalysis, settings: Settings) -> HazardMap
 
 
 def render_uncertainty_map(
-    hazard: HazardMap, output_path: str | Path, saturate_at: float = 0.25
-) -> str:
+    hazard: HazardMap, output_path: str | Path, saturate_at: float | None = None
+) -> tuple[str, float]:
     """Write a viewable map of where the hazard estimate is least trustworthy.
+
+    Returns ``(path, saturate_at)``. The scale is returned rather than kept
+    internal because a colour map whose scale is not recorded is not a
+    measurement - two runs over different terrain would render the same colour
+    for different uncertainties and nothing would say so.
+
+    ``saturate_at`` defaults to the 99th percentile of the field rather than a
+    fixed constant. A fixed 0.25 was arbitrary, and on a typical tile - where
+    sigma spans roughly 0.07 to 0.17 - it compressed the whole image into the
+    lower third of the ramp, so a field with real structure rendered as two
+    tones. Scaling to the data uses the full ramp; recording the number is what
+    keeps that honest rather than merely prettier.
 
     Deliberately a separate image from the hazard heatmap. Blending confidence
     into the hazard colour makes "dangerous" and "unknown" look alike, and they
@@ -254,10 +266,14 @@ def render_uncertainty_map(
     """
     if hazard.uncertainty is None:
         raise ValueError("this hazard map carries no uncertainty field")
+    if saturate_at is None:
+        # Guarded against a degenerate field: a uniform sigma would divide by
+        # zero and render as noise rather than as the flat map it is.
+        saturate_at = max(float(np.percentile(hazard.uncertainty, 99)), 1e-6)
     normalised = np.clip(hazard.uncertainty / saturate_at, 0.0, 1.0)
     coloured = cv2.applyColorMap((normalised * 255).astype(np.uint8), cv2.COLORMAP_INFERNO)
     cv2.imwrite(str(output_path), coloured)
-    return str(output_path)
+    return str(output_path), float(saturate_at)
 
 
 def render_hazard_heatmap(

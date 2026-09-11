@@ -317,6 +317,7 @@ export default function MissionControl() {
               {(["three-quarter", "top", "orbit"] as CameraView[]).map((view) => (
                 <button
                   key={view}
+                  aria-label={`Camera: ${view === "three-quarter" ? "three-quarter" : view} view`}
                   onClick={() => setCamera({ view, nonce: Date.now() })}
                   className="flex-1 rounded border border-edge px-1.5 py-1 text-[10px] text-slate-400 hover:border-accent hover:text-accent"
                 >

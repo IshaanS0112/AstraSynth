@@ -160,6 +160,14 @@ P90 is the number a battery is sized against. Same seed, same numbers — and
 trial *k* is independent of the trial count, so a study can be extended without
 invalidating what came before.
 
+### The analysis chain, and the same ground four ways
+
+![Orbital DEM, slope, hazard and uncertainty](docs/images/analysis-pipeline.png)
+
+![Hazard, uncertainty, slope and elevation as 3-D layers](docs/images/terrain-layers.png)
+
+More, with what each one shows, in [the gallery](docs/gallery.md).
+
 ### Hazard uncertainty is derived, not assigned
 
 | Terrain | Mean hazard | Mean σ | p95 σ |

@@ -42,6 +42,7 @@ export function LayerControl({
           <button
             key={entry.id}
             title={entry.hint}
+            aria-pressed={layer === entry.id}
             onClick={() => onLayer(entry.id)}
             className={`rounded px-2 py-1 text-[11px] transition ${
               layer === entry.id
@@ -84,6 +85,11 @@ export function LayerControl({
         {[1, 2, 4].map((value) => (
           <button
             key={value}
+            // Distinct accessible name: the playback control has a "4x" button
+            // too, and two buttons that sound identical but do different things
+            // are indistinguishable to anyone not looking at the layout.
+            aria-label={`Vertical relief ${value}x`}
+            aria-pressed={exaggeration === value}
             onClick={() => onExaggeration(value)}
             className={`rounded px-1.5 py-0.5 text-[10px] ${
               exaggeration === value ? "bg-accent text-void" : "text-slate-500 hover:text-slate-300"
@@ -378,6 +384,8 @@ export function PlaybackControls({
         {[1, 4, 16].map((value) => (
           <button
             key={value}
+            aria-label={`Playback speed ${value}x`}
+            aria-pressed={speed === value}
             onClick={() => onSpeed(value)}
             className={`rounded px-1.5 py-0.5 text-[10px] ${
               speed === value ? "bg-accent text-void" : "text-slate-500 hover:text-slate-300"

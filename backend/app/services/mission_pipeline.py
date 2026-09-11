@@ -69,6 +69,9 @@ def run_terrain_analysis(db: Session, mission: Mission, settings: Settings) -> T
     heatmap_path = hazard_mapper.render_hazard_heatmap(
         hazard, mission.terrain_image_path, directory / "hazard_heatmap.png"
     )
+    uncertainty_map_path, uncertainty_saturate_at = hazard_mapper.render_uncertainty_map(
+        hazard, directory / "uncertainty_map.png"
+    )
 
     # Planning grid: downsample once here so the planner and the stored
     # metadata agree on exactly which grid a path was computed over.
@@ -98,6 +101,11 @@ def run_terrain_analysis(db: Session, mission: Mission, settings: Settings) -> T
             "downsample_scale": round(float(scale), 4),
             "meters_per_cell": round(settings.meters_per_pixel * float(scale), 4),
         },
+        "uncertainty_map_scale": {
+            "saturate_at": round(uncertainty_saturate_at, 5),
+            "basis": "99th percentile of the propagated sigma field",
+            "colormap": "INFERNO, dark = confident, bright = least trusted",
+        },
         "arrays_path": str(arrays_path),
     }
 
@@ -105,10 +113,6 @@ def run_terrain_analysis(db: Session, mission: Mission, settings: Settings) -> T
     if row is None:
         row = TerrainAnalysisRow(mission_id=mission.id)
         db.add(row)
-
-    uncertainty_map_path = hazard_mapper.render_uncertainty_map(
-        hazard, directory / "uncertainty_map.png"
-    )
 
     row.slope_map_path = slope_map_path
     row.hazard_heatmap_path = heatmap_path
