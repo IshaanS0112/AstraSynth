@@ -28,6 +28,9 @@ def _alembic_config(database_url: str):
     config = Config(str(BACKEND_ROOT / "alembic.ini"))
     config.set_main_option("script_location", str(BACKEND_ROOT / "alembic"))
     config.set_main_option("sqlalchemy.url", database_url)
+    # Read by alembic/env.py, which explains why. Without it, applying a
+    # migration from inside the app tears down the logging the app configured.
+    config.attributes["configure_logger"] = False
     return config
 
 

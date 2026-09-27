@@ -11,11 +11,12 @@ when something goes wrong. The planning and perception maths lives in
 2. [The job queue](#the-job-queue)
 3. [Submitting and following work](#submitting-and-following-work)
 4. [Schema migrations](#schema-migrations)
-5. [Logs](#logs)
-6. [Metrics](#metrics)
-7. [Health and readiness](#health-and-readiness)
-8. [Configuration reference](#configuration-reference)
-9. [Runbook](#runbook)
+5. [Authentication](#authentication)
+6. [Logs](#logs)
+7. [Metrics](#metrics)
+8. [Health and readiness](#health-and-readiness)
+9. [Configuration reference](#configuration-reference)
+10. [Runbook](#runbook)
 
 ---
 
@@ -240,6 +241,104 @@ test is what makes stamping a legitimate operation rather than a gamble.
 
 ---
 
+## Authentication
+
+Off by default. `API_KEY` unset means every endpoint is open, which is what the
+offline demo, the Compose quick start and CI rely on. Turning it on by default
+would mean shipping a default credential, and a default credential is a
+published one.
+
+Set it and the whole surface requires the secret:
+
+```bash
+# Generate one. Anything under 16 characters is refused at startup.
+python -c 'import secrets; print(secrets.token_urlsafe(32))'
+
+export API_KEY=hF3n...                 # then restart the API
+
+curl -s localhost:8000/missions                              # 401
+curl -s localhost:8000/missions -H "X-API-Key: $API_KEY"     # 200
+curl -s localhost:8000/missions -H "Authorization: Bearer $API_KEY"   # 200 too
+```
+
+`Authorization: Bearer` is accepted beside the documented `X-API-Key` header
+because every HTTP client already knows how to send it, and refusing it would
+force a caller to special-case this API for no benefit. The comparison is
+`secrets.compare_digest`, not `==`, so it does not leak the length of the shared
+prefix through its timing.
+
+A key shorter than 16 characters **stops the process from starting**. A
+four-character shared secret is not weak protection, it is *false* protection: it
+makes a deployment feel closed while being trivially guessable, and someone would
+reasonably stop worrying about what is in front of it. Refusing to boot is the
+safer failure.
+
+### What stays open, and why each one
+
+| Path | Open because |
+| --- | --- |
+| `/health`, `/ready` | A container runtime generally cannot be given a credential, and its failure to reach these gets the process killed. Authentication on a liveness probe is a way to cause the outage it exists to survive. |
+| `/docs`, `/openapi.json`, `/redoc` | They describe the API's *shape*, not its data, and closing them breaks the docs page — Swagger UI cannot send a header to fetch its own schema. Nothing there is unavailable to a reader of this repository. |
+| `OPTIONS` (any path) | A browser preflight exists precisely to ask whether the key header may be sent, so it cannot carry the key. Rejecting it makes the API unreachable from the dashboard while looking like a CORS bug. |
+
+Everything else is closed, **including `/static`** — the uploaded terrain tiles
+and rendered hazard overlays, which are mission data. That is why enforcement is
+a middleware rather than a `Depends` on each router: `/static` is a mounted
+`StaticFiles` app, and a dependency cannot reach it. The OpenAPI security scheme
+is declared separately, so `/docs` still shows the padlock and an **Authorize**
+button.
+
+### Where it sits in the stack
+
+```
+RequestContextMiddleware   ← outermost: every response is logged and counted,
+  CORSMiddleware              including a 401 and a preflight
+    ApiKeyMiddleware
+      routers, /static
+```
+
+Each position earns its place. Request context outermost, because a rejection
+nobody can see is how an authentication problem becomes "the dashboard is
+broken". CORS *outside* the key check, so a 401 comes back with CORS headers —
+without that a browser reports it as a CORS failure and hides the status that
+would have explained it. The key check innermost of the three, because it is the
+only one that should ever stop a request reaching a router. Starlette's
+`add_middleware` inserts at the front, so `app/main.py` adds them in reverse of
+that reading order; a test asserts the resulting order rather than trusting the
+comment.
+
+### The dashboard
+
+The shipped frontend does **not** send a key. With `API_KEY` set, inject it at
+the proxy that already sits in front of the API, so the secret stays on the
+server instead of being baked into a browser bundle where anyone who loads the
+page can read it:
+
+```nginx
+location /api/ {
+    proxy_pass http://backend:8000/;
+    proxy_set_header Host $host;
+    proxy_set_header X-API-Key $API_KEY;   # from env, via envsubst or a template
+    client_max_body_size 25m;
+}
+
+location /static/ {
+    proxy_pass http://backend:8000/static/;
+    proxy_set_header Host $host;
+    proxy_set_header X-API-Key $API_KEY;
+}
+```
+
+Be clear about what this buys. It authenticates the **deployment**, not the
+person using it: anyone who can load the dashboard gets everything the dashboard
+can do. There are no accounts, nothing is scoped per-person, and every caller
+that reaches the API is entitled to all of it — so the only question worth
+answering at the edge is "is this caller one of ours", and a shared secret answers
+exactly that and nothing more. The moment missions belong to *people*, this is
+the wrong mechanism and should be replaced rather than extended.
+
+---
+
 ## Logs
 
 JSON lines by default (`LOG_JSON=true`). The questions worth asking of these
@@ -261,6 +360,15 @@ logging parameter it has no other use for. The same ID goes out on the
 `X-Request-ID` response header, so a client can quote it in a bug report, and an
 incoming `X-Request-ID` is honoured rather than replaced, so a trace survives a
 proxy in front.
+
+Two things this layer has been wrong about, both now asserted by tests rather
+than by comment. The access log line is emitted *after* the request completes, so
+the correlation id has to outlive `call_next` — it used to be reset first, leaving
+the one line carrying route, status and duration as the only line in the request
+without an id on it. And `AUTO_MIGRATE` running Alembic on boot used to replace
+this handler entirely and raise the root level to WARNING, silently switching off
+every line below, for the life of the process; `docs/architecture.md` bugs 23–24
+have both.
 
 Any keyword passed as `extra={"astra_...": value}` rides along into the JSON with
 the prefix stripped. That is the whole extension mechanism: a call site can
@@ -285,7 +393,17 @@ Prometheus text exposition at `GET /metrics`.
 | `astra_job_seconds` | histogram | `kind` | How long each kind of study takes |
 | `astra_jobs_queue_depth` | gauge | `status` | Backlog — the first number to look at |
 
-Two decisions inside this that are easy to get wrong:
+With `API_KEY` set, `/metrics` is closed like everything else, so a Prometheus
+scrape job needs the header:
+
+```yaml
+scrape_configs:
+  - job_name: astrasynth
+    static_configs: [{targets: ["astrasynth:8000"]}]
+    authorization: {type: Bearer, credentials: "<API_KEY>"}
+```
+
+Three decisions inside this that are easy to get wrong:
 
 **Labels are route *templates*, not paths.** `/missions/{mission_id}/paths`, not
 `/missions/8f3a…/paths`. Labelling by raw path makes cardinality grow with the
@@ -295,14 +413,23 @@ is read off the matched Starlette route in `request.scope`, and a request that
 matched nothing is labelled `unmatched` rather than by its path — which is also
 what stops a scanner hitting random URLs from inflating the series count.
 
+**A rejected request is labelled with the endpoint it hit, not `unmatched`.**
+`scope["route"]` is only set once the router has run, so a 401 produced by the
+key middleware has no route attached. Falling back to `unmatched` put every
+rejection in the same series as genuine 404s and lost which endpoint was being
+called — so the fallback matches the request against the route table instead, and
+`unmatched` now means only what it says.
+
 **Queue depth is derived on scrape, not maintained on write.** It is a property
 of a table; counting rows at read time cannot drift from the table, and an
 incrementally maintained counter can. If the query fails the scrape still
 succeeds without that gauge — a metrics endpoint that 500s during an incident is
 worse than one missing a series.
 
-The request middleware sits **outermost**, so it records the final status of
-everything including CORS rejections and unhandled exceptions.
+The request middleware sits **outermost** (see
+[Authentication](#where-it-sits-in-the-stack)), so it records the final status of
+everything: CORS preflights, authentication rejections and unhandled exceptions
+included.
 
 ---
 
@@ -339,6 +466,7 @@ perception and planning parameters are documented where they are used.
 | Variable | Default | Notes |
 | --- | --- | --- |
 | `DATABASE_URL` | `postgresql+psycopg2://astra:astra@localhost:5432/astrasynth` | JSONB and native UUID are used; SQLite is not an option |
+| `API_KEY` | unset | Unset leaves every endpoint open. Set it and the surface closes; under 16 characters refuses to boot |
 | `AUTO_MIGRATE` | `true` | Run outstanding migrations on boot |
 | `WORKER_THREADS` | `1` | `0` when workers run as their own deployment |
 | `WORKER_POLL_SECONDS` | `1.0` | How often an idle worker looks for work |
@@ -368,6 +496,15 @@ to grep for in the logs.
 **A job fails immediately and repeatedly.** `error` on the job row holds the
 first 4 000 characters of the traceback. Attempts are counted at claim time, so
 it will stop after `max_attempts` rather than looping.
+
+**Everything returns 401 after a deploy.** `API_KEY` is set and the caller is not
+sending it. The dashboard does not send one by itself — the proxy in front has to
+inject it (see [Authentication](#authentication)). `/health` and `/ready` stay
+open, so a 200 from those beside a 401 from everything else is this and not an
+outage.
+
+**The API will not start, complaining about `API_KEY`.** The configured key is
+shorter than 16 characters. Generate a real one; the error prints the command.
 
 **`/ready` returns 503.** Read the body; it names the failing dependency.
 `/health` should still be 200 — if it is not, the process itself is the problem.

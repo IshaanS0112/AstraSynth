@@ -28,6 +28,7 @@ from app.routers import (
     simulation,
     terrain,
 )
+from app.security import ApiKeyMiddleware, declare_security_scheme, validate_api_key
 from app.worker import WorkerPool
 
 logger = logging.getLogger("astrasynth")
@@ -93,6 +94,9 @@ async def lifespan(app_instance: FastAPI):
 
 settings = get_settings()
 configure_logging(settings.log_level, settings.log_json)
+# Checked here rather than on the first request: a key too short to be worth
+# having should stop a deployment, not surface as a surprise mid-traffic.
+validate_api_key(settings.api_key)
 
 app = FastAPI(
     title="AstraSynth API",
@@ -106,9 +110,24 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# Outermost, so it sees the final status of everything including CORS
-# rejections and unhandled exceptions.
-app.add_middleware(RequestContextMiddleware)
+# Middleware order, and why it is written bottom-up.
+#
+# Starlette's `add_middleware` *inserts at the front*, so the last one added is
+# the outermost. The stack this builds, outside in:
+#
+#   RequestContextMiddleware   correlation id, log line, metrics
+#     CORSMiddleware           response headers, preflight
+#       ApiKeyMiddleware       401 when a shared secret is configured
+#         routers
+#
+# Each position is load-bearing. Request context is outermost so that every
+# response is logged and counted, including a 401 and a preflight - a rejection
+# nobody can see is how an authentication problem turns into "the dashboard is
+# broken". CORS sits outside the key check so that a 401 comes back *with* CORS
+# headers: without that a browser reports it as a CORS failure and hides the
+# status that would have explained it. The key check is innermost of the three
+# because it is the only one that should ever stop a request reaching a router.
+app.add_middleware(ApiKeyMiddleware, api_key=settings.api_key)
 
 app.add_middleware(
     CORSMiddleware,
@@ -117,6 +136,11 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+app.add_middleware(RequestContextMiddleware)
+
+# Only declared when a key is set; a padlock on an open API would be a lie.
+declare_security_scheme(app, settings.api_key)
 
 app.mount("/static", StaticFiles(directory=str(settings.storage_dir)), name="static")
 

@@ -149,3 +149,61 @@ class TestMigrations:
         remaining = set(inspect(create_engine(scratch_database)).get_table_names())
         assert "missions" not in remaining
         assert "jobs" not in remaining
+
+
+class TestMigratingDoesNotDisturbTheProcess:
+    """Applying a migration must not reconfigure the application's logging.
+
+    Alembic's ``env.py`` calls ``fileConfig`` on ``alembic.ini``, which is right
+    for the CLI and destructive in-process: it defaults to
+    ``disable_existing_loggers=True``, and that file sets the root logger to
+    WARNING with a plain console handler. Because the API applies migrations on
+    boot by default, the effect was that every structured request log line
+    disappeared for the life of the process - the JSON handler was replaced and
+    the level was raised above INFO. Nothing failed, and there was no error to
+    find: the logs were simply gone.
+
+    Both assertions matter. The handler identity catches the formatter being
+    swapped; the level catches INFO being filtered out even if a handler survives.
+    """
+
+    def test_the_configured_handler_and_level_survive(self, scratch_database):
+        import logging
+
+        from app.db.migrate import upgrade_to_head
+        from app.observability import configure_logging
+
+        root = logging.getLogger()
+        saved_handlers, saved_level = root.handlers[:], root.level
+        try:
+            configure_logging("INFO", json_logs=True)
+            handler_before = root.handlers[0]
+
+            upgrade_to_head(scratch_database)
+
+            assert root.handlers == [handler_before], (
+                "alembic replaced the application's log handler; "
+                "see alembic/env.py and the configure_logger attribute"
+            )
+            assert root.level == logging.INFO
+            assert root.isEnabledFor(logging.INFO)
+        finally:
+            root.handlers[:] = saved_handlers
+            root.setLevel(saved_level)
+
+    def test_the_cli_path_still_configures_its_own_logging(self):
+        """The guard must not disable alembic's logging for actual CLI use.
+
+        ``configure_logger`` defaults to True, so a plain ``alembic upgrade head``
+        is unaffected; only a caller that sets it False opts out. Asserted on the
+        attribute rather than by running the CLI, because what is being checked is
+        which side of the branch each caller lands on.
+        """
+        from app.db.migrate import _alembic_config
+
+        programmatic = _alembic_config("postgresql+psycopg2://unused/none")
+        assert programmatic.attributes["configure_logger"] is False
+
+        from alembic.config import Config
+
+        assert Config(str(BACKEND / "alembic.ini")).attributes.get("configure_logger") is None

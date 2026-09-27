@@ -219,3 +219,148 @@ class TestEndpoints:
 
         assert missing not in body, "a path parameter leaked into a metric label"
         assert 'route="/missions/{mission_id}"' in body
+
+
+class TestCorrelationReachesTheSummaryLine:
+    """The line carrying route, status and duration must carry the id too.
+
+    The reset used to sit in a `finally` around `call_next`, which put it *before*
+    the summary line - so the single most useful line in a request was the only
+    one without a correlation id on it, and joining a slow request to what it did
+    was impossible. Nothing failed; the field was simply absent.
+    """
+
+    def _captured(self, app, path: str, **kwargs):
+        import io
+        import json
+        import logging
+
+        from fastapi.testclient import TestClient
+
+        from app.observability import JsonFormatter
+
+        stream = io.StringIO()
+        handler = logging.StreamHandler(stream)
+        handler.setFormatter(JsonFormatter())
+        root = logging.getLogger()
+        previous, level = root.handlers[:], root.level
+        root.handlers[:] = [handler]
+        root.setLevel(logging.INFO)
+        try:
+            response = TestClient(app, raise_server_exceptions=False).get(path, **kwargs)
+        finally:
+            root.handlers[:] = previous
+            root.setLevel(level)
+        lines = [json.loads(line) for line in stream.getvalue().splitlines() if line.strip()]
+        return response, lines
+
+    def _app(self):
+        from fastapi import FastAPI
+
+        from app.observability import RequestContextMiddleware
+
+        app = FastAPI()
+
+        @app.get("/things/{thing_id}")
+        def thing(thing_id: str):
+            return {"id": thing_id}
+
+        @app.get("/boom")
+        def boom():
+            raise RuntimeError("deliberate")
+
+        app.add_middleware(RequestContextMiddleware)
+        return app
+
+    def test_the_summary_line_carries_the_request_id(self):
+        response, lines = self._captured(self._app(), "/things/abc")
+
+        summary = [line for line in lines if line.get("message") == "request"]
+        assert summary, f"no summary line in {lines}"
+        assert summary[0]["request_id"] == response.headers["X-Request-ID"]
+        assert summary[0]["route"] == "/things/{thing_id}"
+
+    def test_an_incoming_id_is_honoured_so_a_trace_survives_a_proxy(self):
+        response, lines = self._captured(
+            self._app(), "/things/abc", headers={"X-Request-ID": "from-the-proxy"}
+        )
+
+        assert response.headers["X-Request-ID"] == "from-the-proxy"
+        summary = [line for line in lines if line.get("message") == "request"]
+        assert summary[0]["request_id"] == "from-the-proxy"
+
+    def test_a_failing_request_is_still_correlated(self):
+        _, lines = self._captured(self._app(), "/boom")
+
+        failed = [line for line in lines if line.get("message") == "request failed"]
+        assert failed and failed[0]["request_id"]
+
+
+class TestRouteLabelForShortCircuitedResponses:
+    """A 401 on a real endpoint must not be labelled the same as a 404.
+
+    `scope["route"]` is only set once the router runs, so a response produced by
+    an inner middleware had no route - and reporting it as `unmatched` lost which
+    endpoint was called in exactly the case an operator cares about, while
+    colliding with the label for URLs that genuinely do not exist.
+    """
+
+    def _app(self, reject: bool):
+        from fastapi import FastAPI
+        from fastapi.responses import JSONResponse
+        from starlette.middleware.base import BaseHTTPMiddleware
+
+        from app.observability import RequestContextMiddleware
+
+        app = FastAPI()
+
+        @app.get("/missions/{mission_id}")
+        def mission(mission_id: str):
+            return {"id": mission_id}
+
+        @app.post("/missions")
+        def create():
+            return {"created": True}
+
+        class Gate(BaseHTTPMiddleware):
+            async def dispatch(self, request, call_next):
+                if reject:
+                    return JSONResponse(status_code=401, content={"detail": "no"})
+                return await call_next(request)
+
+        app.add_middleware(Gate)
+        app.add_middleware(RequestContextMiddleware)
+        return app
+
+    def _label_for(self, app, method: str, path: str) -> str:
+        from fastapi.testclient import TestClient
+
+        from app.observability import METRICS
+
+        before = METRICS.render()
+        TestClient(app).request(method, path)
+        added = set(METRICS.render().splitlines()) - set(before.splitlines())
+        routes = [
+            line.split('route="', 1)[1].split('"', 1)[0]
+            for line in added
+            if "astra_http_requests_total{" in line and 'route="' in line
+        ]
+        assert routes, f"no new request series in {added}"
+        return routes[0]
+
+    def test_a_rejection_is_labelled_with_the_endpoint_it_hit(self):
+        assert self._label_for(self._app(reject=True), "GET", "/missions/abc") == (
+            "/missions/{mission_id}"
+        )
+
+    def test_a_url_that_does_not_exist_is_still_unmatched(self):
+        assert self._label_for(self._app(reject=True), "GET", "/nope/nope") == "unmatched"
+
+    def test_a_wrong_method_on_a_real_path_keeps_that_path_as_the_label(self):
+        """A 405 is about the method, not the path; the path is the useful label."""
+        assert self._label_for(self._app(reject=True), "DELETE", "/missions") == "/missions"
+
+    def test_the_router_path_is_still_preferred_when_the_router_ran(self):
+        assert self._label_for(self._app(reject=False), "GET", "/missions/abc") == (
+            "/missions/{mission_id}"
+        )

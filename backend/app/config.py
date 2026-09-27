@@ -18,6 +18,12 @@ class Settings(BaseSettings):
     database_url: str = "postgresql+psycopg2://astra:astra@localhost:5432/astrasynth"
     storage_dir: Path = Path(__file__).resolve().parent.parent / "storage"
     cors_origins: str = "http://localhost:5173,http://localhost:3000"
+    # Shared secret for the whole HTTP surface. Empty means every endpoint is
+    # open, which is what the offline demo, the Compose quick start and CI rely
+    # on - the alternative would be shipping a default credential, and a default
+    # credential is a published one. Set it and the API requires the secret on
+    # every request except the probes and /docs. See app/security.py.
+    api_key: str = ""
 
     # --- LLM ----------------------------------------------------------------
     anthropic_api_key: str = ""

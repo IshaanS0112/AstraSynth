@@ -27,8 +27,22 @@ from app.config import get_settings
 from app.db.session import Base
 
 config = context.config
-if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+
+# Alembic's own logging config is for the *CLI*, and applying it in-process is
+# destructive: `fileConfig` defaults to disable_existing_loggers=True, and
+# alembic.ini sets the root logger to WARNING with a plain console handler. So
+# running a migration from inside the app replaced the JSON handler
+# `configure_logging` had installed and raised the root level above INFO - which
+# silently switched off every structured request log line for the rest of the
+# process's life. The API applies migrations on boot by default, so that was the
+# normal case, not an edge one.
+#
+# `configure_logger` is alembic's documented hook for this: the CLI leaves it
+# unset and gets its configured output, and a programmatic caller sets it False
+# to keep the logging it has already set up. disable_existing_loggers=False on
+# top, so even the CLI path only adds to what is there.
+if config.config_file_name is not None and config.attributes.get("configure_logger", True):
+    fileConfig(config.config_file_name, disable_existing_loggers=False)
 
 # Default to the application's database, but never override a URL the caller
 # supplied. Clobbering it would mean `alembic -x` and programmatic use could not

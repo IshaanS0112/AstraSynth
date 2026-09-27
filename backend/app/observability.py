@@ -36,6 +36,7 @@ from contextvars import ContextVar
 
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
+from starlette.routing import Match
 
 request_id_var: ContextVar[str | None] = ContextVar("astra_request_id", default=None)
 
@@ -216,44 +217,83 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
         started = time.perf_counter()
         logger = logging.getLogger("astrasynth.http")
 
+        # The context variable is reset in one place, after *everything* that
+        # logs. It used to be reset in a `finally` around `call_next`, which put
+        # the reset before the summary line below - so the one line carrying the
+        # route, status and duration was the only line in the request with no
+        # correlation id on it.
         try:
-            response = await call_next(request)
-        except Exception:
+            try:
+                response = await call_next(request)
+            except Exception:
+                duration = time.perf_counter() - started
+                route = _route_template(request)
+                METRICS.increment(
+                    "astra_http_requests_total",
+                    {"method": request.method, "route": route, "status": "500"},
+                )
+                METRICS.observe("astra_http_request_seconds", duration, {"route": route})
+                logger.exception(
+                    "request failed",
+                    extra={"astra_route": route, "astra_method": request.method},
+                )
+                raise
+
             duration = time.perf_counter() - started
             route = _route_template(request)
             METRICS.increment(
                 "astra_http_requests_total",
-                {"method": request.method, "route": route, "status": "500"},
+                {"method": request.method, "route": route, "status": str(response.status_code)},
             )
             METRICS.observe("astra_http_request_seconds", duration, {"route": route})
-            logger.exception(
-                "request failed",
-                extra={"astra_route": route, "astra_method": request.method},
+            response.headers["X-Request-ID"] = request_id
+            logger.info(
+                "request",
+                extra={
+                    "astra_method": request.method,
+                    "astra_route": route,
+                    "astra_status": response.status_code,
+                    "astra_duration_ms": round(duration * 1000, 2),
+                },
             )
-            raise
+            return response
         finally:
             request_id_var.reset(token)
 
-        duration = time.perf_counter() - started
-        route = _route_template(request)
-        METRICS.increment(
-            "astra_http_requests_total",
-            {"method": request.method, "route": route, "status": str(response.status_code)},
-        )
-        METRICS.observe("astra_http_request_seconds", duration, {"route": route})
-        response.headers["X-Request-ID"] = request_id
-        logger.info(
-            "request",
-            extra={
-                "astra_method": request.method,
-                "astra_route": route,
-                "astra_status": response.status_code,
-                "astra_duration_ms": round(duration * 1000, 2),
-            },
-        )
-        return response
-
 
 def _route_template(request: Request) -> str:
+    """The matched route's path template, for use as a metric label.
+
+    ``scope["route"]`` is set by the router, so it is present for anything the
+    router handled. It is *absent* for a response produced by an inner middleware
+    that short-circuited - an authentication rejection, most obviously - and
+    reporting those as ``unmatched`` was actively misleading: it labelled a 401
+    on a real endpoint identically to a 404 on a URL that does not exist, and
+    lost which endpoint was being called in the one case where an operator most
+    wants to know.
+
+    So when the router did not run, the request is matched against the route
+    table here. The result is still a template, so label cardinality stays bound
+    by the number of routes; the walk only happens on this fallback path.
+    """
     route = request.scope.get("route")
-    return getattr(route, "path", None) or "unmatched"
+    path = getattr(route, "path", None)
+    if path:
+        return path
+
+    partial: str | None = None
+    for candidate in getattr(request.app, "routes", ()):
+        template = getattr(candidate, "path", None)
+        if not template:
+            continue
+        try:
+            match, _ = candidate.matches(request.scope)
+        except Exception:  # a route type that cannot be matched offline
+            continue
+        if match is Match.FULL:
+            return template
+        if match is Match.PARTIAL and partial is None:
+            # The path exists but the method does not: a 405, and the template is
+            # still the useful label.
+            partial = template
+    return partial or "unmatched"
