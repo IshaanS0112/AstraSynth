@@ -14,3 +14,4 @@ dist/
 data/sample_terrain/mars_*
 backend/tests/_fixture_terrain.png
 *.tsbuildinfo
+.hypothesis/

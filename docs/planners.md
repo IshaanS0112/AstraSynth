@@ -286,6 +286,52 @@ get a deadlock that only reproduces under load.
 
 ---
 
+## What the properties pin down
+
+The benchmark tables above say these planners are *fast*. They say nothing about
+whether they are *right*, and on random terrain no test can know the right answer
+— the optimal route through a grid Hypothesis just invented is "whatever A\*
+computes". So `tests/test_planner_properties.py` asserts **metamorphic**
+invariants instead: relations between two runs, which hold whatever the terrain
+is.
+
+| Property | Why it can fail |
+| --- | --- |
+| A\* and Dijkstra return the same total cost | A heuristic that is not admissible on some terrain; a tie-break that changes the optimum rather than the route |
+| The reported cost equals the cost of the route returned | Cost accumulated in the search diverging from the cost of the edges in the answer |
+| No route revisits a cell | A closed-set bug reopening a settled vertex |
+| Raising hazard anywhere never lowers the optimal cost | Monotonicity of the cost surface — the assumption every admissible heuristic rests on |
+| A rover with a stricter slope limit never finds a cheaper route | Constraints being applied to cost instead of to feasibility |
+| Lowering the lethal threshold never opens a route that was closed | The feasibility test reading the threshold inconsistently |
+| Every cell pair in a returned route passes `evaluate_edge` | The search relaxing an edge it would not accept if asked directly |
+| Every Theta\* segment passes `segment` | Line-of-sight and feasibility disagreeing |
+| D\* Lite after a map change costs the same as A\* from scratch | Incremental repair losing optimality — the defect the whole algorithm exists to avoid |
+| A no-op map update produces zero repairs | Change detection firing on unchanged cells |
+
+Two of these earn their keep immediately. **D\* Lite equals a fresh A\*** is the
+only honest test of incremental replanning: the algorithm's entire claim is that
+repairing is cheaper than replanning *at no cost in optimality*, and a repair
+that quietly returns a 3%-worse route passes every example-based test anyone
+would write. And **every Theta\* segment passes `segment`** cross-checks the two
+halves of one cost model against each other.
+
+That last one found three real defects on the first run — the sub-cell gradient
+baseline, the supercover list read as a traversal order, and the origin cell
+tested for lethal hazard. All three were cases where the any-angle check and the
+grid step disagreed about what is drivable, which is exactly the kind of
+inconsistency that produces a route the executor then refuses to drive.
+`docs/architecture.md` bugs 17–19 has each one.
+
+The grids are deliberately small (6–14 cells) and the example counts modest.
+Every example runs real searches, and a property suite that takes ten minutes is
+a property suite people stop running.
+
+```bash
+pytest tests/test_planner_properties.py -q
+```
+
+---
+
 ## Failure modes
 
 No planner in this package returns `False`. Failures carry a machine-readable

@@ -432,15 +432,26 @@ class PlanningGrid:
         being quietly compared against A* as though the two searched the same
         graph.
 
-        Feasibility is *not* approximated. Every supercover cell is tested
-        against the lethal-hazard layer, and the gradient is tested between
-        consecutive samples rather than end to end, so a segment that dips
-        through a ravine is rejected even when its net rise is zero.
+        Feasibility is *not* approximated, and is deliberately the *same* test
+        the grid step applies: every supercover cell is checked against the
+        lethal-hazard layer, and the gradient is checked between consecutive
+        supercover cells - which are adjacent, so the baseline is one cell, the
+        same baseline ``evaluate_edge`` uses. Checking it between sub-cell
+        samples instead would divide a per-cell elevation difference by half a
+        cell and report twice the real slope. A segment that dips through a
+        ravine is still rejected, because the ravine's cells are on the
+        supercover path even when the net rise is zero.
         """
         if not self.in_bounds(a) or not self.in_bounds(b):
             return None, EdgeBlock.OUT_OF_BOUNDS, 0.0
 
-        for cell in self.supercover_cells(a, b):
+        # The cell being left is excluded, matching `evaluate_edge`: the rule is
+        # that lethal ground cannot be *entered*, not that it cannot be escaped.
+        # A rover whose belief update puts it on a newly-lethal cell has to be
+        # able to drive off it, and D* Lite relies on exactly that. Checking the
+        # origin here made `segment` refuse routes the grid step allows.
+        path = self.supercover_cells(a, b)
+        for cell in path[1:]:
             if float(self.hazard[cell]) >= self.max_hazard:
                 return None, EdgeBlock.LETHAL_HAZARD, 0.0
 
@@ -456,12 +467,38 @@ class PlanningGrid:
         elevations = self.elevation[sample_cells]
 
         ds_m = (length_cells * self.meters_per_cell) / (steps - 1)
-        gradients = np.abs(np.diff(elevations)) / ds_m
-        if float(gradients.max(initial=0.0)) > self._max_slope_tan:
-            return None, EdgeBlock.SLOPE, 0.0
 
-        # Midpoint rule: each sub-interval is charged the hazard of its far end
-        # and the gradient measured across it.
+        # Slope is measured between consecutive *distinct cells along the line*,
+        # over their real separation. Two things this gets right that the
+        # obvious versions do not:
+        #
+        # The elevation field is piecewise constant per cell, so differencing it
+        # at sub-cell sample spacing and dividing by that spacing inflates every
+        # gradient by the sampling rate - at two samples per cell, exactly
+        # double. Theta* was rejecting segments the grid step accepts, so the
+        # two halves of one cost model disagreed about what is drivable.
+        #
+        # And the supercover list is a *set* of clipped cells, not a traversal
+        # order: on an exact diagonal it carries both corner cells, and reading
+        # consecutive entries as a path invents a step between two cells the
+        # rover never drives between. The sampled sequence follows the line.
+        # See docs/architecture.md, "Bugs found".
+        walked = [tuple(int(v) for v in pair) for pair in zip(*sample_cells, strict=False)]
+        previous = walked[0]
+        for cell in walked[1:]:
+            if cell == previous:
+                continue
+            run_m = self.distance_m(previous, cell)
+            rise_m = float(self.elevation[cell] - self.elevation[previous])
+            if abs(rise_m / run_m) > self._max_slope_tan:
+                return None, EdgeBlock.SLOPE, 0.0
+            previous = cell
+
+        gradients = np.abs(np.diff(elevations)) / max(ds_m, self.meters_per_cell)
+
+        # Midpoint rule for the cost: each sub-interval is charged the hazard of
+        # its far end. The gradient term uses a baseline of at least one cell,
+        # for the same reason the feasibility check does.
         cost = float(
             np.sum(
                 ds_m
@@ -481,7 +518,10 @@ class PlanningGrid:
         cols = np.linspace(a[1], b[1], steps)
         elevations = self.elevation[(np.rint(rows).astype(int), np.rint(cols).astype(int))]
         ds_m = (length_cells * self.meters_per_cell) / (steps - 1)
-        gradients = np.abs(np.diff(elevations)) / ds_m
+        # Same baseline correction as `segment`: a per-cell elevation field
+        # differenced at sub-cell spacing reports inflated gradients, and this
+        # one feeds an energy figure that gets compared against a battery.
+        gradients = np.abs(np.diff(elevations)) / max(ds_m, self.meters_per_cell)
         return float(
             np.sum(
                 self.rover.energy_per_meter_kwh

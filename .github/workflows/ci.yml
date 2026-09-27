@@ -64,17 +64,32 @@ jobs:
         run: python -m pytest -v
 
       - name: Assert the database-backed tests actually ran
-        # A skipped test is not a passing test. If the service container ever
-        # stops being reachable the suite would still exit 0 with everything
-        # skipped, so the count is checked explicitly.
+        # A skipped test is not a passing test. Every module listed here needs a
+        # reachable PostgreSQL - the API suite for JSONB and native UUID columns,
+        # the queue for SELECT ... FOR UPDATE SKIP LOCKED, the migration suite
+        # for running Alembic against a real server. Each skips itself when no
+        # database answers, so without this step CI would exit 0 having proved
+        # nothing about any of them.
         env:
           TEST_DATABASE_URL: postgresql+psycopg2://astra:astra@localhost:5432/astrasynth
         run: |
           set -euo pipefail
-          python -m pytest -q --no-header -p no:cacheprovider \
-            tests/test_api.py tests/test_api_v3.py | tee result.txt
-          if grep -q "skipped" result.txt; then
-            echo "::error::API tests were skipped - PostgreSQL service unreachable"
+          # `-o addopts=` matters. pytest.ini already passes -q, so a second -q
+          # on the command line makes it -qq, and -qq suppresses the final
+          # summary line - the line this step greps. The guard was reading an
+          # empty file and passing. Overriding addopts puts this step in charge
+          # of its own verbosity instead of inheriting half of it.
+          python -m pytest -o addopts= -q --no-header -p no:cacheprovider \
+            tests/test_api.py tests/test_api_v3.py tests/test_jobs.py \
+            tests/test_migrations.py tests/test_observability.py | tee result.txt
+          if grep -qE "[0-9]+ skipped" result.txt; then
+            echo "::error::Database-backed tests were skipped - PostgreSQL unreachable"
+            exit 1
+          fi
+          # A collection error that selects nothing would also leave no "skipped"
+          # behind, so the positive case is asserted too.
+          if ! grep -qE "[0-9]+ passed" result.txt; then
+            echo "::error::No database-backed tests ran at all"
             exit 1
           fi
 
@@ -89,7 +104,9 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install ruff==0.9.2
+      # Pinned in backend/requirements-lint.txt so a local checkout and CI
+      # cannot disagree about what "clean" means.
+      - run: pip install -r requirements-lint.txt
       - name: Ruff check
         run: ruff check .
       - name: Ruff format check
