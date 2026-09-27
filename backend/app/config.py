@@ -57,6 +57,29 @@ class Settings(BaseSettings):
     sandy_plain_max_roughness: float = 0.12
     sandy_plain_max_area_fraction: float = 0.10
 
+    # Run outstanding migrations on boot. True is right for a single-node
+    # deployment and for development; turn it off where a deploy pipeline runs
+    # `alembic upgrade head` as its own step and the app should not race it.
+    auto_migrate: bool = True
+
+    # --- Observability ------------------------------------------------------
+    log_level: str = "INFO"
+    # JSON lines by default: the questions worth asking of these logs ("which
+    # requests for this mission took over a second") are filters over fields,
+    # not regular expressions over prose. Set false for a readable console.
+    log_json: bool = True
+
+    # --- Background jobs ----------------------------------------------------
+    # Worker threads started inside the API process. 0 disables them, which is
+    # the right setting when workers run as their own deployment - the queue is
+    # a table, so the two arrangements are the same thing with different
+    # process boundaries.
+    worker_threads: int = 1
+    worker_poll_seconds: float = 1.0
+    # A claim is good for this long without a heartbeat before another worker
+    # may take the job. Must exceed the gap between heartbeats by a wide margin.
+    job_lease_seconds: float = 90.0
+
     # --- Hazard uncertainty -------------------------------------------------
     # Uncertainty is propagated, not invented: each hazard component gets a
     # standard deviation derived from a known error source, and they combine by

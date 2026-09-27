@@ -16,7 +16,9 @@ class RoverPath(Base):
     __tablename__ = "rover_paths"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    mission_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("missions.id"), nullable=False)
+    mission_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("missions.id"), nullable=False, index=True
+    )
     rover_config_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("rover_configs.id"), nullable=False
     )

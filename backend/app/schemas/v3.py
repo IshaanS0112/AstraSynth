@@ -167,6 +167,57 @@ class ScienceTourRequest(BaseModel):
     relay_at: Point | None = None
 
 
+# --- background jobs --------------------------------------------------------
+
+
+class MonteCarloJobRequest(MonteCarloRequest):
+    """A Monte Carlo study submitted to the queue rather than run inline.
+
+    The trial cap is two orders of magnitude higher than the synchronous one for
+    a simple reason: nothing is waiting on an HTTP connection, so the limit is
+    what the machine can finish rather than what a proxy will hold open.
+    """
+
+    trials: int = Field(default=200, ge=1, le=5000)
+    workers: int | None = Field(default=None, ge=1, le=64)
+
+
+class JobOut(ORMModel):
+    id: uuid.UUID
+    mission_id: uuid.UUID
+    kind: str
+    status: str
+    progress: float
+    progress_detail: str | None
+    experiment_id: uuid.UUID | None
+    error: str | None
+    attempts: int
+    max_attempts: int
+    claimed_by: str | None
+    created_at: datetime
+    started_at: datetime | None
+    finished_at: datetime | None
+
+
+class JobSummary(ORMModel):
+    id: uuid.UUID
+    kind: str
+    status: str
+    progress: float
+    progress_detail: str | None
+    experiment_id: uuid.UUID | None
+    created_at: datetime
+    finished_at: datetime | None
+
+
+class QueueStats(BaseModel):
+    """Depth by status, plus whether anything is actually consuming the queue."""
+
+    by_status: dict[str, int]
+    in_process_workers: int
+    oldest_queued_seconds: float | None
+
+
 class ExperimentOut(ORMModel):
     id: uuid.UUID
     mission_id: uuid.UUID

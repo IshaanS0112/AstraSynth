@@ -10,6 +10,7 @@ from app.db.session import Base
 from app.enums import MissionStatus
 
 if TYPE_CHECKING:  # avoids a circular import at runtime
+    from app.models.jobs import Job
     from app.models.path import RoverPath
     from app.models.report import MissionRiskReport
     from app.models.v3 import Experiment, ScienceTarget, TraverseRun
@@ -51,13 +52,20 @@ class Mission(Base):
         cascade="all, delete-orphan",
         order_by="Experiment.created_at",
     )
+    jobs: Mapped[list["Job"]] = relationship(
+        back_populates="mission",
+        cascade="all, delete-orphan",
+        order_by="Job.created_at",
+    )
 
 
 class TerrainAnalysis(Base):
     __tablename__ = "terrain_analyses"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    mission_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("missions.id"), nullable=False)
+    mission_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("missions.id"), nullable=False, index=True
+    )
     slope_map_path: Mapped[str | None] = mapped_column(String(500))
     obstacle_contours: Mapped[list | None] = mapped_column(JSONB)
     terrain_classification: Mapped[str | None] = mapped_column(String(50))

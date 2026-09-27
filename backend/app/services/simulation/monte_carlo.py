@@ -39,6 +39,7 @@ from __future__ import annotations
 
 import multiprocessing
 import os
+from collections.abc import Callable
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass, field, replace
 
@@ -276,6 +277,7 @@ def run(
     uncertainty_weight: float = 0.0,
     prior_sigma: float = 0.25,
     workers: int | None = None,
+    progress: Callable[[int, int], bool] | None = None,
 ) -> MonteCarloReport:
     """Run the mission ``trials`` times and aggregate.
 
@@ -285,6 +287,12 @@ def run(
     and the core count. **The result does not depend on which is used** - the
     per-trial seed streams are spawned in the parent before any work is handed
     out, so parallelism changes the wall time and nothing else.
+
+    ``progress`` is called after each completed trial with
+    ``(completed, total)``; returning ``False`` stops the study and returns the
+    trials finished so far. That is how a background job reports progress and
+    how cancelling one actually stops it - the alternative, killing the worker,
+    would leave a half-written experiment and no way to say which half.
 
     ``grid_template`` is never mutated: every trial builds its own grid from the
     template's rover and thresholds, so a trial that drives the rover into a
@@ -320,20 +328,33 @@ def run(
     pool_context = _pool_context() if worker_count > 1 else None
 
     if worker_count <= 1 or pool_context is None:
-        report.trials.extend(
-            _execute_trial(context, index, stream) for index, stream in enumerate(streams)
-        )
         report.workers = 1
+        for index, stream in enumerate(streams):
+            report.trials.append(_execute_trial(context, index, stream))
+            if progress is not None and not progress(index + 1, trials):
+                break
         return report
 
     jobs = list(enumerate(streams))
     chunk = max(1, len(jobs) // (worker_count * 4))
-    with ProcessPoolExecutor(
+    report.workers = worker_count
+
+    # The executor is managed by hand rather than with `with`, because the
+    # context manager's shutdown waits for every queued future. On cancellation
+    # that means sitting through the whole study you just cancelled.
+    pool = ProcessPoolExecutor(
         max_workers=worker_count,
         mp_context=pool_context,
         initializer=_init_worker,
         initargs=(context,),
-    ) as pool:
-        report.trials.extend(pool.map(_worker_trial, jobs, chunksize=chunk))
-    report.workers = worker_count
+    )
+    try:
+        # `map` yields in submission order as results arrive, so progress can be
+        # reported per trial without the results being reordered.
+        for completed, result in enumerate(pool.map(_worker_trial, jobs, chunksize=chunk), 1):
+            report.trials.append(result)
+            if progress is not None and not progress(completed, trials):
+                break
+    finally:
+        pool.shutdown(wait=False, cancel_futures=True)
     return report

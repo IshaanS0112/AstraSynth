@@ -16,7 +16,7 @@ import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import DateTime, Float, ForeignKey, Integer, String, func
+from sqlalchemy import DateTime, Float, ForeignKey, Index, Integer, String, func
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -39,7 +39,7 @@ class ScienceTarget(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     mission_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("missions.id", ondelete="CASCADE"), nullable=False
+        ForeignKey("missions.id", ondelete="CASCADE"), nullable=False, index=True
     )
     label: Mapped[str] = mapped_column(String(60), nullable=False)
     x: Mapped[int] = mapped_column(Integer, nullable=False)
@@ -66,7 +66,7 @@ class TraverseRun(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     mission_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("missions.id", ondelete="CASCADE"), nullable=False
+        ForeignKey("missions.id", ondelete="CASCADE"), nullable=False, index=True
     )
     rover_config_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("rover_configs.id"), nullable=False
@@ -107,10 +107,11 @@ class Experiment(Base):
     """
 
     __tablename__ = "experiments"
+    __table_args__ = (Index("ix_experiments_mission_kind", "mission_id", "kind"),)
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     mission_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("missions.id", ondelete="CASCADE"), nullable=False
+        ForeignKey("missions.id", ondelete="CASCADE"), nullable=False, index=True
     )
     kind: Mapped[str] = mapped_column(String(30), nullable=False)
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="SUCCESS")

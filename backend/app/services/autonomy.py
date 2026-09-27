@@ -461,6 +461,8 @@ def run_monte_carlo_study(
     uncertainty_weight: float = 0.0,
     sensor_range_m: float | None = None,
     perturbations: monte_carlo.Perturbations | None = None,
+    workers: int | None = None,
+    progress=None,
 ) -> Experiment:
     grids = load_grids(mission, settings)
     spec = rover_spec(rover_config)
@@ -484,6 +486,8 @@ def run_monte_carlo_study(
         perturbations=perturbations,
         uncertainty_weight=uncertainty_weight,
         prior_sigma=max(float(np.mean(grids.uncertainty)), 0.05) + 0.10,
+        workers=workers,
+        progress=progress,
     )
     runtime = time.perf_counter() - started
 
@@ -498,6 +502,7 @@ def run_monte_carlo_study(
             "trials": trials,
             "uncertainty_weight": uncertainty_weight,
             "sensor": sensor.describe(),
+            "workers": report.workers,
         },
         None,
         report.as_dict(),

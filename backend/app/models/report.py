@@ -16,8 +16,12 @@ class MissionRiskReport(Base):
     __tablename__ = "mission_risk_reports"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    mission_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("missions.id"), nullable=False)
-    rover_path_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("rover_paths.id"), nullable=False)
+    mission_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("missions.id"), nullable=False, index=True
+    )
+    rover_path_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("rover_paths.id"), nullable=False, index=True
+    )
     risk_score: Mapped[str | None] = mapped_column(String(20))
     feasibility: Mapped[str | None] = mapped_column(String(30))
     # Everything the deterministic engines computed, frozen before any LLM call.
