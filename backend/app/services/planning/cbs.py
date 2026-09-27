@@ -40,6 +40,7 @@ from __future__ import annotations
 
 import heapq
 import itertools
+import math
 from dataclasses import dataclass, field
 from time import monotonic
 
@@ -337,16 +338,26 @@ def build_adjacency(grid: PlanningGrid, wait_cost: float | None = None) -> Adjac
     belief map is updated between traverse steps, never during deconfliction.
     """
     wait = _wait_cost(grid) if wait_cost is None else wait_cost
+    # Sourced from the compiled graph rather than re-deriving each edge: that
+    # build is one vectorised pass over eight array slices, where this loop used
+    # to be rows x cols x 8 numpy scalar reads.
+    graph = grid.compiled()
+    cols = graph.cols
+    neighbour = graph.neighbour
+    edge_cost = graph.cost
+
     adjacency: Adjacency = {}
-    for row in range(grid.rows):
-        for col in range(grid.cols):
-            cell = (row, col)
-            edges: list[tuple[Cell, float]] = [(cell, wait)]
-            for neighbour in grid.neighbours(cell):
-                cost = grid.edge_cost(cell, neighbour)
-                if cost is not None:
-                    edges.append((neighbour, cost))
-            adjacency[cell] = tuple(edges)
+    for index in range(graph.size):
+        cell = divmod(index, cols)
+        edges: list[tuple[Cell, float]] = [(cell, wait)]
+        for k in range(8):
+            destination = neighbour[k][index]
+            if destination < 0:
+                continue
+            cost = edge_cost[k][index]
+            if cost != math.inf:
+                edges.append((divmod(destination, cols), cost))
+        adjacency[cell] = tuple(edges)
     return adjacency
 
 

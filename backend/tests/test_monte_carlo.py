@@ -25,7 +25,7 @@ def setup(capacity: float = 0.6):
     return orbital, elevation, template
 
 
-def run(trials: int, seed: int, capacity: float = 0.6, **kwargs):
+def run(trials: int, seed: int, capacity: float = 0.6, workers: int | None = 1, **kwargs):
     orbital, elevation, template = setup(capacity)
     return monte_carlo.run(
         orbital_hazard=orbital,
@@ -36,6 +36,7 @@ def run(trials: int, seed: int, capacity: float = 0.6, **kwargs):
         sensor=RoverSensor(range_m=10.0),
         trials=trials,
         seed=seed,
+        workers=workers,
         **kwargs,
     )
 
@@ -53,6 +54,34 @@ class TestReproducibility:
         long = run(24, seed=7)
         assert [t.energy_kwh for t in short.trials] == [t.energy_kwh for t in long.trials[:6]]
         assert [t.succeeded for t in short.trials] == [t.succeeded for t in long.trials[:6]]
+
+
+class TestParallelism:
+    """Distributing the trials must change the wall time and nothing else."""
+
+    def test_parallel_and_serial_agree_exactly(self):
+        serial = run(12, seed=7, workers=1)
+        parallel = run(12, seed=7, workers=4)
+
+        assert serial.workers == 1
+        assert parallel.workers == 4
+        assert [t.energy_kwh for t in serial.trials] == [t.energy_kwh for t in parallel.trials]
+        assert [t.succeeded for t in serial.trials] == [t.succeeded for t in parallel.trials]
+        assert serial.success_probability == parallel.success_probability
+
+    def test_the_worker_count_does_not_reorder_the_trials(self):
+        """pool.map preserves order; a switch to as_completed would not."""
+        for workers in (1, 2, 3):
+            report = run(9, seed=5, workers=workers)
+            assert [t.index for t in report.trials] == list(range(9))
+
+    def test_small_studies_stay_in_process(self):
+        """A pool costs more to start than four trials cost to run."""
+        assert monte_carlo.resolve_workers(4, None) == 1
+        assert monte_carlo.resolve_workers(64, None) > 1
+
+    def test_workers_never_exceeds_the_trial_count(self):
+        assert monte_carlo.resolve_workers(3, 16) == 3
 
 
 class TestStatistics:

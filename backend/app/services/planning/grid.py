@@ -177,6 +177,7 @@ class PlanningGrid:
     """
 
     __slots__ = (
+        "_compiled",
         "_max_slope_tan",
         "_payload_factor",
         "cols",
@@ -226,6 +227,20 @@ class PlanningGrid:
         self.rows, self.cols = self.hazard.shape
         self._max_slope_tan = math.tan(math.radians(rover.max_traversable_slope_deg))
         self._payload_factor = rover.payload_factor()
+        self._compiled = None
+
+    def compiled(self):
+        """The graph as flat lists, built once and cached on first search.
+
+        Built lazily rather than in ``__init__`` because plenty of grids are
+        constructed only to measure a route or read a hazard value, and
+        compiling 300,000 edges for that would be pure loss.
+        """
+        if self._compiled is None:
+            from app.services.planning.compiled import CompiledGraph
+
+            self._compiled = CompiledGraph(self)
+        return self._compiled
 
     # --- geometry -----------------------------------------------------------
 
@@ -525,6 +540,11 @@ class PlanningGrid:
             if float(self.hazard[cell]) != float(value):
                 self.hazard[cell] = float(value)
                 changed.append(cell)
+        if changed and self._compiled is not None:
+            # Patch, never rebuild. A sensor reading changes a handful of cells;
+            # recompiling the whole graph for them would make the incremental
+            # planner slower than the one it replaced.
+            self._compiled.recompute_cells(self, changed)
         return changed
 
     def with_hazard(self, hazard: np.ndarray) -> PlanningGrid:

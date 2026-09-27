@@ -48,10 +48,17 @@ import heapq
 import math
 from dataclasses import dataclass, field
 
-from app.services.planning.grid import Cell, PlanningGrid
+from app.services.planning.grid import NEIGHBOUR_OFFSETS, Cell, PlanningGrid
 
 _INF = math.inf
 Key = tuple[float, float]
+
+# ``v`` is a predecessor of ``u`` exactly when ``v + offset_k == u`` for some k,
+# i.e. ``v == u + offset_opposite[k]``. Because NEIGHBOUR_OFFSETS contains every
+# offset together with its negation, the predecessor set of a cell is its
+# neighbour set - but the *edge* between them is directional, and this table is
+# what maps one direction to the other without recomputing geometry per lookup.
+_OPPOSITE = tuple(NEIGHBOUR_OFFSETS.index((-dr, -dc)) for dr, dc in NEIGHBOUR_OFFSETS)
 
 
 @dataclass(slots=True)
@@ -88,37 +95,73 @@ class DStarLiteStats:
 class DStarLite:
     """Incremental shortest path from a moving start to a fixed goal."""
 
+    __slots__ = (
+        "_cols",
+        "_counter",
+        "_g",
+        "_goal",
+        "_graph",
+        "_heuristic_from_start",
+        "_k_m",
+        "_last_start",
+        "_queue",
+        "_queue_keys",
+        "_rhs",
+        "_start",
+        "goal",
+        "grid",
+        "stats",
+    )
+
     def __init__(self, grid: PlanningGrid, start: Cell, goal: Cell) -> None:
         if not grid.in_bounds(start) or not grid.in_bounds(goal):
             raise ValueError("start and goal must be inside the planning grid")
         self.grid = grid
-        self.start = start
         self.goal = goal
 
-        self._g: dict[Cell, float] = {}
-        self._rhs: dict[Cell, float] = {}
-        self._queue: list[tuple[Key, int, Cell]] = []
-        self._queue_keys: dict[Cell, Key] = {}
+        # Flat integer cells and list-backed value tables, for the same reason
+        # A* uses them: this search touches millions of g/rhs entries, and a
+        # dictionary keyed on freshly allocated tuples spends most of its time
+        # hashing rather than searching.
+        self._graph = grid.compiled()
+        self._cols = self._graph.cols
+        self._start = start[0] * self._cols + start[1]
+        self._goal = goal[0] * self._cols + goal[1]
+
+        size = self._graph.size
+        self._g: list[float] = [_INF] * size
+        self._rhs: list[float] = [_INF] * size
+        self._queue: list[tuple[Key, int, int]] = []
+        self._queue_keys: dict[int, Key] = {}
         self._counter = 0
         self._k_m = 0.0
-        self._last_start = start
+        self._last_start = self._start
         self.stats = DStarLiteStats()
 
-        self._rhs[goal] = 0.0
-        self._push(goal, self._key(goal))
+        self._heuristic_from_start = self._graph.heuristics_to(self._start)
+
+        self._rhs[self._goal] = 0.0
+        self._push(self._goal, self._key(self._goal))
         self.stats.initial_expansions = self._compute_shortest_path()
+
+    # --- frame conversion -----------------------------------------------------
+
+    @property
+    def start(self) -> Cell:
+        """The rover's current cell, in ``(row, col)`` terms for callers."""
+        return divmod(self._start, self._cols)
 
     # --- queue --------------------------------------------------------------
 
-    def _push(self, cell: Cell, key: Key) -> None:
+    def _push(self, cell: int, key: Key) -> None:
         self._counter += 1
         self._queue_keys[cell] = key
         heapq.heappush(self._queue, (key, self._counter, cell))
 
-    def _remove(self, cell: Cell) -> None:
+    def _remove(self, cell: int) -> None:
         self._queue_keys.pop(cell, None)
 
-    def _top(self) -> tuple[Key, Cell] | None:
+    def _top(self) -> tuple[Key, int] | None:
         while self._queue:
             key, _, cell = self._queue[0]
             authoritative = self._queue_keys.get(cell)
@@ -130,30 +173,40 @@ class DStarLite:
 
     # --- D* Lite core -------------------------------------------------------
 
-    def g(self, cell: Cell) -> float:
-        return self._g.get(cell, _INF)
+    def g(self, cell: Cell | int) -> float:
+        index = cell if isinstance(cell, int) else cell[0] * self._cols + cell[1]
+        return self._g[index]
 
-    def rhs(self, cell: Cell) -> float:
-        return self._rhs.get(cell, _INF)
+    def rhs(self, cell: Cell | int) -> float:
+        index = cell if isinstance(cell, int) else cell[0] * self._cols + cell[1]
+        return self._rhs[index]
 
-    def _key(self, cell: Cell) -> Key:
-        best = min(self.g(cell), self.rhs(cell))
-        return (best + self.grid.heuristic(self.start, cell) + self._k_m, best)
+    def _key(self, cell: int) -> Key:
+        g = self._g[cell]
+        rhs = self._rhs[cell]
+        best = g if g < rhs else rhs
+        return (best + self._heuristic_from_start[cell] + self._k_m, best)
 
-    def _update_vertex(self, cell: Cell) -> None:
-        if cell != self.goal:
+    def _update_vertex(self, cell: int) -> None:
+        if cell != self._goal:
             best = _INF
-            for successor in self.grid.neighbours(cell):
-                cost = self.grid.edge_cost(cell, successor)
-                if cost is None:
+            neighbour = self._graph.neighbour
+            edge_cost = self._graph.cost
+            g = self._g
+            for k in range(8):
+                successor = neighbour[k][cell]
+                if successor < 0:
                     continue
-                candidate = cost + self.g(successor)
+                cost = edge_cost[k][cell]
+                if cost == _INF:
+                    continue
+                candidate = cost + g[successor]
                 if candidate < best:
                     best = candidate
             self._rhs[cell] = best
 
         self._remove(cell)
-        if self.g(cell) != self.rhs(cell):
+        if self._g[cell] != self._rhs[cell]:
             self._push(cell, self._key(cell))
 
     def _compute_shortest_path(self) -> int:
@@ -163,7 +216,8 @@ class DStarLite:
             if top is None:
                 break
             key, cell = top
-            if not (key < self._key(self.start) or self.rhs(self.start) != self.g(self.start)):
+            start = self._start
+            if not (key < self._key(start) or self._rhs[start] != self._g[start]):
                 break
 
             heapq.heappop(self._queue)
@@ -174,28 +228,53 @@ class DStarLite:
             if key < new_key:
                 # The key was computed under an older k_m; reinsert, do not expand.
                 self._push(cell, new_key)
-            elif self.g(cell) > self.rhs(cell):
+            elif self._g[cell] > self._rhs[cell]:
                 # Overconsistent: the cheap case, just accept the better value.
-                self._g[cell] = self.rhs(cell)
-                for predecessor in self.grid.neighbours(cell):
+                self._g[cell] = self._rhs[cell]
+                for predecessor in self._predecessors(cell):
                     self._update_vertex(predecessor)
             else:
                 # Underconsistent: a path got *worse*. Invalidate and let the
                 # predecessors - and this vertex - find out where else to go.
                 self._g[cell] = _INF
                 self._update_vertex(cell)
-                for predecessor in self.grid.neighbours(cell):
+                for predecessor in self._predecessors(cell):
                     self._update_vertex(predecessor)
         return expansions
+
+    def _predecessors(self, cell: int):
+        neighbour = self._graph.neighbour
+        for k in _OPPOSITE:
+            candidate = neighbour[k][cell]
+            if candidate >= 0:
+                yield candidate
 
     # --- driving ------------------------------------------------------------
 
     @property
     def reachable(self) -> bool:
-        return self.rhs(self.start) < _INF
+        return self._rhs[self._start] < _INF
 
     def cost_to_goal(self) -> float:
-        return min(self.g(self.start), self.rhs(self.start))
+        return min(self._g[self._start], self._rhs[self._start])
+
+    def _best_successor(self, cell: int) -> tuple[int, float]:
+        neighbour = self._graph.neighbour
+        edge_cost = self._graph.cost
+        g = self._g
+        best_cell, best_value = -1, _INF
+        for k in range(8):
+            successor = neighbour[k][cell]
+            if successor < 0:
+                continue
+            cost = edge_cost[k][cell]
+            if cost == _INF:
+                continue
+            value = cost + g[successor]
+            if value < best_value:
+                best_value = value
+                best_cell = successor
+        return best_cell, best_value
 
     def next_step(self) -> Cell | None:
         """The successor of ``start`` on the current best route, or ``None``.
@@ -203,19 +282,10 @@ class DStarLite:
         ``None`` means the goal is unreachable from where the rover is standing
         given what it currently believes.
         """
-        if self.start == self.goal:
+        if self._start == self._goal:
             return None
-        best_cell: Cell | None = None
-        best_value = _INF
-        for successor in self.grid.neighbours(self.start):
-            cost = self.grid.edge_cost(self.start, successor)
-            if cost is None:
-                continue
-            value = cost + self.g(successor)
-            if value < best_value:
-                best_value = value
-                best_cell = successor
-        return best_cell if best_value < _INF else None
+        best_cell, best_value = self._best_successor(self._start)
+        return divmod(best_cell, self._cols) if best_value < _INF else None
 
     def extract_path(self, max_steps: int | None = None) -> list[Cell]:
         """The full route from ``start`` to ``goal`` under the current beliefs.
@@ -227,27 +297,18 @@ class DStarLite:
         """
         if not self.reachable:
             return []
-        limit = max_steps if max_steps is not None else self.grid.rows * self.grid.cols
-        cells = [self.start]
-        current = self.start
+        limit = max_steps if max_steps is not None else self._graph.size
+        current = self._start
+        indices = [current]
         seen = {current}
         for _ in range(limit):
-            if current == self.goal:
-                return cells
-            best_cell: Cell | None = None
-            best_value = _INF
-            for successor in self.grid.neighbours(current):
-                cost = self.grid.edge_cost(current, successor)
-                if cost is None:
-                    continue
-                value = cost + self.g(successor)
-                if value < best_value:
-                    best_value = value
-                    best_cell = successor
-            if best_cell is None or best_cell in seen:
+            if current == self._goal:
+                return [divmod(i, self._cols) for i in indices]
+            best_cell, best_value = self._best_successor(current)
+            if best_cell < 0 or best_value == _INF or best_cell in seen:
                 return []
             seen.add(best_cell)
-            cells.append(best_cell)
+            indices.append(best_cell)
             current = best_cell
         return []
 
@@ -259,11 +320,16 @@ class DStarLite:
         This is the whole trick that makes D* Lite incremental across motion
         rather than only across map changes.
         """
-        if cell == self.start:
+        index = cell[0] * self._cols + cell[1]
+        if index == self._start:
             return
-        self._k_m += self.grid.heuristic(self._last_start, cell)
-        self._last_start = cell
-        self.start = cell
+        last_row, last_col = divmod(self._last_start, self._cols)
+        self._k_m += self.grid.heuristic((last_row, last_col), cell)
+        self._last_start = index
+        self._start = index
+        # The heuristic is measured from the rover, so moving it re-bases the
+        # whole table. One vectorised pass beats a hypot per key computation.
+        self._heuristic_from_start = self._graph.heuristics_to(index)
 
     def apply_updates(self, updates: dict[Cell, float]) -> RepairRecord | None:
         """Write sensed hazard values into the grid and repair the search tree.
@@ -281,8 +347,9 @@ class DStarLite:
             # every edge *into* v: its predecessors are what need re-evaluating.
             # v itself is updated too, because whether v can be left is
             # unaffected but its own consistency must still be restored.
-            self._update_vertex(cell)
-            for predecessor in self.grid.neighbours(cell):
+            index = cell[0] * self._cols + cell[1]
+            self._update_vertex(index)
+            for predecessor in self._predecessors(index):
                 self._update_vertex(predecessor)
 
         expansions = self._compute_shortest_path()

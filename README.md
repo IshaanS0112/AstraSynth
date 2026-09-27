@@ -3,7 +3,7 @@
 Planetary mission autonomy: terrain perception under uncertainty, four route planners over one cost model, multi-rover deconfliction, and mission-level simulation of what a rover actually knows.
 
 [![CI](https://github.com/IshaanS0112/AstraSynth/actions/workflows/ci.yml/badge.svg)](https://github.com/IshaanS0112/AstraSynth/actions/workflows/ci.yml)
-[![Tests](https://img.shields.io/badge/tests-238%20passing-brightgreen)](backend/tests)
+[![Tests](https://img.shields.io/badge/tests-252%20passing-brightgreen)](backend/tests)
 [![Python](https://img.shields.io/badge/python-3.10%20%7C%203.13-blue)](backend/requirements.txt)
 [![Ruff](https://img.shields.io/badge/lint-ruff-261230)](backend/pyproject.toml)
 [![License](https://img.shields.io/badge/license-MIT-yellow)](LICENSE)
@@ -95,6 +95,23 @@ Same grid, same cost function, heuristic on and off:
 | 256 × 256 | 41,280 | 65,523 | 37.0% | ✅ |
 
 Run inside a Linux container; absolute timings depend on hardware, the expansion ratio doesn't. "Costs agree" matters more than the speedup: if A* ever returned a *cheaper* cost than Dijkstra, the heuristic would be inadmissible and the path wouldn't be optimal. `pytest` asserts this.
+
+### Speed — the graph is compiled, not re-derived
+
+Profiling put a third of A*'s runtime inside per-edge numpy scalar reads that
+were neither search nor terrain analysis. The cost model is now compiled once
+into flat lists (`planning/compiled.py`) and the planners search that:
+
+| | Before | After |
+|---|---|---|
+| A* 192 × 192, warm grid | 298 ms | **62 ms** |
+| CBS, 3 heterogeneous rovers | 13.1 s | **5.5 s** |
+| Monte Carlo (1 core → 4 cores) | 2.9 trials/s | **23.6 trials/s** |
+| Whole test suite | 141 s | **76 s** |
+
+Every node count, cost and route is **unchanged** — that is what makes the
+numbers meaningful, and `test_compiled_graph.py` asserts the compiled view
+against the cost model edge-by-edge rather than trusting it.
 
 ### D* Lite against replanning from scratch — `scripts/benchmark_v3.py`
 
@@ -281,9 +298,9 @@ The global product is ~11 GB, so the script reads a window out of a file you've 
 cd backend && python -m pytest -v
 ```
 
-**238 tests.** 204 need no network and no database; the remaining 34 drive the
+**252 tests.** 218 need no network and no database; the remaining 34 drive the
 full HTTP surface against PostgreSQL and skip automatically if none is reachable.
-CI runs all 238 against a service container and fails the build if the
+CI runs all 252 against a service container and fails the build if the
 database-backed ones are silently skipped.
 
 Coverage by claim:

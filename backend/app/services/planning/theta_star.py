@@ -39,10 +39,15 @@ from __future__ import annotations
 
 import heapq
 from dataclasses import dataclass, field
+from math import inf
 
 import numpy as np
 
-from app.services.planning.grid import Cell, EdgeBlock, PlanningGrid
+from app.services.planning.grid import NEIGHBOUR_OFFSETS, Cell, PlanningGrid
+
+# Offset -> its index in NEIGHBOUR_OFFSETS, so a neighbour cell maps back to the
+# compiled graph's direction slot without a search.
+_DIRECTION = {offset: index for index, offset in enumerate(NEIGHBOUR_OFFSETS)}
 
 
 @dataclass(slots=True)
@@ -62,6 +67,7 @@ def search(grid: PlanningGrid, start: Cell, goal: Cell) -> ThetaResult:
     Returns the corner sequence, not the cells in between: consecutive entries
     are the endpoints of straight segments and are generally not adjacent.
     """
+    graph = grid.compiled()
     rows, cols = grid.shape
     g_score = np.full((rows, cols), np.inf, dtype=np.float64)
     g_score[start] = 0.0
@@ -122,13 +128,16 @@ def search(grid: PlanningGrid, start: Cell, goal: Cell) -> ThetaResult:
                         improved = True
 
             # Path 1 (the A* case): the ordinary grid step. Always evaluated,
-            # because the shortcut may be blocked or simply worse.
-            step_cost, reason = grid.evaluate_edge(current, neighbour)
-            if step_cost is None:
-                if reason is EdgeBlock.SLOPE:
-                    blocked_by_slope += 1
-                elif reason is EdgeBlock.LETHAL_HAZARD:
+            # because the shortcut may be blocked or simply worse. Read from the
+            # compiled graph, so the same edge is not re-derived per visit.
+            source = current[0] * cols + current[1]
+            direction = _DIRECTION[(neighbour[0] - current[0], neighbour[1] - current[1])]
+            step_cost = graph.cost[direction][source]
+            if step_cost == inf:
+                if graph.blocked_hazard[direction][source]:
                     blocked_by_hazard += 1
+                elif graph.blocked_slope[direction][source]:
+                    blocked_by_slope += 1
             else:
                 candidate = g_score[current] + step_cost
                 if candidate < g_score[neighbour]:

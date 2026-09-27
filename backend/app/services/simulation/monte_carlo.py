@@ -37,6 +37,9 @@ driving.
 
 from __future__ import annotations
 
+import multiprocessing
+import os
+from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass, field, replace
 
 import numpy as np
@@ -45,6 +48,9 @@ from app.services.planning.grid import Cell, PlanningGrid
 from app.services.simulation.belief import BeliefState
 from app.services.simulation.execution import simulate_traverse
 from app.services.simulation.sensors import RoverSensor
+
+# Below this many trials the process pool costs more to start than it saves.
+PARALLEL_THRESHOLD = 8
 
 
 @dataclass(slots=True)
@@ -88,6 +94,8 @@ class MonteCarloReport:
     trials: list[TrialResult] = field(default_factory=list)
     seed: int = 0
     perturbations: Perturbations = field(default_factory=Perturbations)
+    # Reported so a study says how it was run, not because it changes anything.
+    workers: int = 1
 
     @property
     def success_probability(self) -> float:
@@ -122,6 +130,7 @@ class MonteCarloReport:
         return {
             "trials": len(self.trials),
             "seed": self.seed,
+            "workers": self.workers,
             "success_probability": round(self.success_probability, 4),
             "failures_by_mode": self.failure_histogram(),
             "energy_kwh": self.percentiles("energy_kwh"),
@@ -153,6 +162,107 @@ def _sample_truth(
     return truth
 
 
+# --- one trial --------------------------------------------------------------
+#
+# Module-level, and taking only picklable primitives, because this is what runs
+# inside a worker process. Anything captured from an enclosing scope would have
+# to survive pickling, and a closure over a PlanningGrid would ship the compiled
+# graph to every worker on every trial.
+
+_WORKER_CONTEXT: dict = {}
+
+
+def _init_worker(context: dict) -> None:
+    global _WORKER_CONTEXT
+    _WORKER_CONTEXT = context
+
+
+def _execute_trial(context: dict, index: int, stream: np.random.SeedSequence) -> TrialResult:
+    """One realisation of the mission. Pure given ``(context, index, stream)``.
+
+    That purity is the load-bearing property: the seed sequence is spawned per
+    trial in the parent, so which worker runs trial *k* - or whether any worker
+    does - cannot change its result. ``test_monte_carlo`` asserts that serial
+    and parallel runs agree exactly.
+    """
+    settings: Perturbations = context["perturbations"]
+    orbital: np.ndarray = context["orbital"]
+    elevation: np.ndarray = context["elevation"]
+
+    rng = np.random.default_rng(stream)
+    truth = _sample_truth(orbital, settings, rng)
+    energy_factor = float(rng.lognormal(0.0, settings.energy_factor_sigma))
+
+    trial_rover = replace(
+        context["rover"],
+        energy_per_meter_kwh=context["rover"].energy_per_meter_kwh * energy_factor,
+    )
+    template = PlanningGrid(
+        hazard=orbital.copy(),
+        elevation=elevation,
+        meters_per_cell=context["meters_per_cell"],
+        rover=trial_rover,
+        slope_coefficient=context["slope_coefficient"],
+        max_hazard=context["max_hazard"],
+    )
+    belief = BeliefState.from_prior(orbital, prior_sigma=context["prior_sigma"])
+
+    result = simulate_traverse(
+        truth_hazard=truth,
+        start=context["start"],
+        goal=context["goal"],
+        belief=belief,
+        sensor=context["sensor"],
+        grid_template=template,
+        rng=rng,
+        uncertainty_weight=context["uncertainty_weight"],
+    )
+
+    return TrialResult(
+        index=index,
+        succeeded=result.succeeded,
+        failure=result.outcome.failure.value if result.outcome.failure else None,
+        energy_kwh=result.energy_kwh,
+        distance_m=result.distance_m,
+        elapsed_seconds=result.elapsed_seconds,
+        replans=result.replans,
+        reroutes=result.reroutes,
+        repair_expansions=result.repair_expansions,
+        energy_factor=energy_factor,
+    )
+
+
+def _worker_trial(job: tuple[int, np.random.SeedSequence]) -> TrialResult:
+    index, stream = job
+    return _execute_trial(_WORKER_CONTEXT, index, stream)
+
+
+def _pool_context():
+    """A start method that is safe to use from inside a web server.
+
+    ``fork`` is fast but copies a process that may hold locks in other threads -
+    and this runs on FastAPI's request threadpool, which is exactly that
+    situation. ``forkserver`` forks from a clean single-threaded helper instead,
+    so it is safe without paying ``spawn``'s full interpreter restart on every
+    worker. Where forkserver is unavailable (macOS ships it, Windows does not)
+    ``spawn`` is the correct fallback; ``fork`` deliberately is not.
+    """
+    available = multiprocessing.get_all_start_methods()
+    for method in ("forkserver", "spawn"):
+        if method in available:
+            return multiprocessing.get_context(method)
+    return None
+
+
+def resolve_workers(trials: int, workers: int | None) -> int:
+    """How many processes to use. ``1`` means run in this process."""
+    if workers is not None:
+        return max(1, min(workers, trials))
+    if trials < PARALLEL_THRESHOLD:
+        return 1
+    return max(1, min(os.cpu_count() or 1, trials))
+
+
 def run(
     orbital_hazard: np.ndarray,
     elevation: np.ndarray,
@@ -165,8 +275,16 @@ def run(
     perturbations: Perturbations | None = None,
     uncertainty_weight: float = 0.0,
     prior_sigma: float = 0.25,
+    workers: int | None = None,
 ) -> MonteCarloReport:
     """Run the mission ``trials`` times and aggregate.
+
+    Trials are independent by construction, so they are distributed across
+    processes when there are enough of them to be worth the pool. ``workers=1``
+    forces the serial path; ``None`` picks a sensible number from the trial count
+    and the core count. **The result does not depend on which is used** - the
+    per-trial seed streams are spawned in the parent before any work is handed
+    out, so parallelism changes the wall time and nothing else.
 
     ``grid_template`` is never mutated: every trial builds its own grid from the
     template's rover and thresholds, so a trial that drives the rover into a
@@ -177,53 +295,45 @@ def run(
     settings = perturbations or Perturbations()
     orbital = np.asarray(orbital_hazard, dtype=np.float64)
 
-    # One child stream per trial: trial k is independent of the trial count.
+    context = {
+        "orbital": orbital,
+        "elevation": np.asarray(elevation, dtype=np.float64),
+        "start": start,
+        "goal": goal,
+        # A copy, so a worker cannot mutate the caller's spec through the pickle.
+        "rover": replace(grid_template.rover),
+        "meters_per_cell": grid_template.meters_per_cell,
+        "slope_coefficient": grid_template.slope_coefficient,
+        "max_hazard": grid_template.max_hazard,
+        "sensor": sensor,
+        "perturbations": settings,
+        "uncertainty_weight": uncertainty_weight,
+        "prior_sigma": prior_sigma,
+    }
+
+    # One child stream per trial, spawned here: trial k is independent of the
+    # trial count *and* of the worker count.
     streams = np.random.SeedSequence(seed).spawn(trials)
     report = MonteCarloReport(seed=seed, perturbations=settings)
 
-    for index, stream in enumerate(streams):
-        rng = np.random.default_rng(stream)
-        truth = _sample_truth(orbital, settings, rng)
-        energy_factor = float(rng.lognormal(0.0, settings.energy_factor_sigma))
+    worker_count = resolve_workers(trials, workers)
+    pool_context = _pool_context() if worker_count > 1 else None
 
-        trial_rover = replace(
-            grid_template.rover,
-            energy_per_meter_kwh=grid_template.rover.energy_per_meter_kwh * energy_factor,
+    if worker_count <= 1 or pool_context is None:
+        report.trials.extend(
+            _execute_trial(context, index, stream) for index, stream in enumerate(streams)
         )
-        template = PlanningGrid(
-            hazard=orbital.copy(),
-            elevation=np.asarray(elevation, dtype=np.float64),
-            meters_per_cell=grid_template.meters_per_cell,
-            rover=trial_rover,
-            slope_coefficient=grid_template.slope_coefficient,
-            max_hazard=grid_template.max_hazard,
-        )
-        belief = BeliefState.from_prior(orbital, prior_sigma=prior_sigma)
+        report.workers = 1
+        return report
 
-        result = simulate_traverse(
-            truth_hazard=truth,
-            start=start,
-            goal=goal,
-            belief=belief,
-            sensor=sensor,
-            grid_template=template,
-            rng=rng,
-            uncertainty_weight=uncertainty_weight,
-        )
-
-        report.trials.append(
-            TrialResult(
-                index=index,
-                succeeded=result.succeeded,
-                failure=result.outcome.failure.value if result.outcome.failure else None,
-                energy_kwh=result.energy_kwh,
-                distance_m=result.distance_m,
-                elapsed_seconds=result.elapsed_seconds,
-                replans=result.replans,
-                reroutes=result.reroutes,
-                repair_expansions=result.repair_expansions,
-                energy_factor=energy_factor,
-            )
-        )
-
+    jobs = list(enumerate(streams))
+    chunk = max(1, len(jobs) // (worker_count * 4))
+    with ProcessPoolExecutor(
+        max_workers=worker_count,
+        mp_context=pool_context,
+        initializer=_init_worker,
+        initargs=(context,),
+    ) as pool:
+        report.trials.extend(pool.map(_worker_trial, jobs, chunksize=chunk))
+    report.workers = worker_count
     return report

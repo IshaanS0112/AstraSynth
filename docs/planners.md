@@ -92,11 +92,13 @@ rocks — the terrain any-angle planning is for:
 
 | Grid | A* length | Theta* length | Shorter | A* turns | Theta* turns | A* ms | Theta* ms |
 |---|---|---|---|---|---|---|---|
-| 48 × 48 | 131.0 m | 124.8 m | 4.7% | 17 | 7 | 10 | 147 |
-| 64 × 64 | 176.2 m | 168.7 m | 4.3% | 17 | 6 | 12 | 240 |
-| 96 × 96 | 269.1 m | 259.5 m | 3.6% | 28 | 18 | 32 | 566 |
+| 48 × 48 | 131.0 m | 124.8 m | 4.7% | 17 | 7 | 6 | 130 |
+| 64 × 64 | 176.2 m | 168.7 m | 4.3% | 17 | 6 | 7 | 179 |
+| 96 × 96 | 269.1 m | 259.5 m | 3.6% | 28 | 18 | 13 | 474 |
 
-Fewer than half the turns, and 10–18× slower: line-of-sight checks are not free.
+Fewer than half the turns, and 20–35× slower: line-of-sight checks are not free,
+and unlike the grid step they cannot be precompiled — a segment between two
+arbitrary corners is not an edge of any fixed graph.
 On a *continuous random cost field* the advantage largely disappears, because
 there is no straight line to find — every cell costs something different, so the
 cheapest route genuinely wanders. A* remains the default planner.
@@ -237,6 +239,50 @@ in a concavity is unreachable by any choice of weights and will not appear, no
 matter how fine the sweep. Recovering those needs ε-constraint or a proper
 multi-objective search, which is not implemented. The front returned is a subset
 of the true front and is labelled as one.
+
+---
+
+## How it is made fast
+
+The cost model is a method; the thing the planners search is a **compiled view**
+of it. `compiled.py` builds all eight neighbour directions as whole-array numpy
+slice arithmetic — one pass, ~5 ms on a 60 × 60 grid — and hands the planners
+flat Python lists. After that an edge lookup is a list index rather than a numpy
+scalar read, and cells are integers rather than `(row, col)` tuples, so the
+search loop allocates and hashes nothing.
+
+The profile that motivated it: A* on 192 × 192 spent 33% of its runtime inside
+`evaluate_edge` across 91,000 calls, none of which was search.
+
+| | Before | After |
+|---|---|---|
+| A* 192 × 192 (warm grid) | 298 ms | 62 ms |
+| A* 96 × 96 (benchmark) | 32 ms | 13 ms |
+| D* Lite traverse step | — | 0.26 ms |
+| CBS, 3 rovers | 13.1 s | 5.5 s |
+| Monte Carlo, 1 core | 2.9 trials/s | 7.7 trials/s |
+| Monte Carlo, 4 cores | — | 23.6 trials/s |
+| Whole test suite | 141 s | 76 s |
+
+**Every node count, cost and route is unchanged.** That is the only reason the
+numbers above mean anything, and it is asserted rather than assumed:
+`test_compiled_graph.py` checks the compiled view against `evaluate_edge`
+edge-by-edge — including the *attribution* of why a blocked edge was blocked —
+over terrain built to fire every rejection path, and the A*/Dijkstra benchmark
+still reports 3,273 / 13,331 / 24,431 / 41,280 expansions.
+
+D* Lite does not rebuild the graph when the rover learns something. A sensor
+reading changes a handful of cells, and `recompute_cells` patches only the edges
+those cells participate in — which is the whole point of an incremental planner
+and would be undone by recompiling 300,000 edges per step.
+
+Monte Carlo trials are independent, so they run across processes above a
+threshold. The per-trial seed streams are spawned in the parent *before* any
+work is distributed, so the worker count changes the wall time and nothing else —
+`test_monte_carlo.py::TestParallelism` asserts serial and parallel results agree
+exactly. The pool uses `forkserver` rather than `fork`, because this runs on a
+web server's request threadpool and forking a multi-threaded process is how you
+get a deadlock that only reproduces under load.
 
 ---
 
