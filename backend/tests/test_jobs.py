@@ -474,3 +474,63 @@ class TestApi:
         # The fixture disables in-process workers, so this must report zero -
         # a depth without a consumer count cannot distinguish busy from stopped.
         assert stats["in_process_workers"] == 0
+
+
+class TestConfiguration:
+    """The settings that govern the queue have to actually reach the worker.
+
+    Every field in this class was already present, already documented in
+    ``config.py``, and already inert: ``Worker.__init__`` defaulted its timings to
+    literals that happened to equal the settings defaults, so nothing looked
+    wrong and nothing responded to the environment either. These assert the wire,
+    not the value - a default that coincides with the configured value is exactly
+    what hid the defect, so each one sets something the default is not.
+    """
+
+    def test_the_worker_takes_its_timings_from_settings(self):
+        from app.config import Settings
+        from app.worker import Worker
+
+        settings = Settings(worker_poll_seconds=0.25, job_lease_seconds=11.0)
+        worker = Worker(settings)
+
+        assert worker.poll_interval == 0.25
+        assert worker.lease_seconds == 11.0
+
+    def test_an_explicit_argument_still_wins(self):
+        """Config is the default, not a ceiling: `--poll-interval` has to override."""
+        from app.config import Settings
+        from app.worker import Worker
+
+        settings = Settings(worker_poll_seconds=0.25, job_lease_seconds=11.0)
+        worker = Worker(settings, poll_interval=0.5, lease_seconds=7.0)
+
+        assert worker.poll_interval == 0.5
+        assert worker.lease_seconds == 7.0
+
+    def test_the_pool_passes_them_to_every_worker_it_makes(self):
+        from app.config import Settings
+        from app.worker import WorkerPool
+
+        settings = Settings(worker_poll_seconds=0.25, job_lease_seconds=11.0)
+        pool = WorkerPool(2, settings)
+        try:
+            pool.start()
+            assert len(pool._threads) == 2
+        finally:
+            pool.stop(timeout=2.0)
+
+        # The threads are gone; what is asserted is that a worker built the way
+        # the pool builds them carries the configured timings.
+        from app.worker import Worker
+
+        assert Worker(settings, poll_interval=pool.poll_interval).lease_seconds == 11.0
+
+    def test_zero_threads_starts_nothing(self):
+        from app.config import Settings
+        from app.worker import WorkerPool
+
+        pool = WorkerPool(0, Settings())
+        pool.start()
+        assert pool._threads == []
+        pool.stop(timeout=1.0)

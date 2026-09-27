@@ -64,13 +64,22 @@ class Worker:
     def __init__(
         self,
         settings: Settings | None = None,
-        poll_interval: float = 1.0,
-        lease_seconds: float = jobs.DEFAULT_LEASE_SECONDS,
+        poll_interval: float | None = None,
+        lease_seconds: float | None = None,
         worker_id: str | None = None,
     ) -> None:
+        # Both timings default to `None` rather than to a literal, so that "not
+        # specified" resolves to the configured value instead of shadowing it.
+        # They used to default to 1.0 and DEFAULT_LEASE_SECONDS, which happened
+        # to equal the settings defaults - so WORKER_POLL_SECONDS and
+        # JOB_LEASE_SECONDS were inert, and changing either one did nothing.
         self.settings = settings or get_settings()
-        self.poll_interval = poll_interval
-        self.lease_seconds = lease_seconds
+        self.poll_interval = (
+            self.settings.worker_poll_seconds if poll_interval is None else poll_interval
+        )
+        self.lease_seconds = (
+            self.settings.job_lease_seconds if lease_seconds is None else lease_seconds
+        )
         self.worker_id = worker_id or worker_identity()
         self.processed = 0
 
@@ -253,9 +262,17 @@ class Worker:
 class WorkerPool:
     """Worker threads owned by the API process, started and stopped by lifespan."""
 
-    def __init__(self, count: int, settings: Settings | None = None) -> None:
+    def __init__(
+        self,
+        count: int,
+        settings: Settings | None = None,
+        poll_interval: float | None = None,
+    ) -> None:
         self.count = count
-        self.settings = settings
+        # Resolved here rather than left as None, so every worker in the pool
+        # shares one Settings instance instead of each reading the environment.
+        self.settings = settings or get_settings()
+        self.poll_interval = poll_interval
         self._stop = threading.Event()
         self._threads: list[threading.Thread] = []
 
@@ -264,7 +281,11 @@ class WorkerPool:
             logger.info("in-process workers disabled")
             return
         for index in range(self.count):
-            worker = Worker(self.settings, worker_id=f"{worker_identity()}#{index}")
+            worker = Worker(
+                self.settings,
+                poll_interval=self.poll_interval,
+                worker_id=f"{worker_identity()}#{index}",
+            )
             thread = threading.Thread(
                 target=worker.run_forever,
                 args=(self._stop,),
@@ -285,7 +306,14 @@ class WorkerPool:
 def main() -> int:
     parser = argparse.ArgumentParser(description="AstraSynth background worker")
     parser.add_argument("--workers", type=int, default=1, help="threads in this process")
-    parser.add_argument("--poll-interval", type=float, default=1.0)
+    # No default: omitting the flag has to mean "use WORKER_POLL_SECONDS", not
+    # "use whatever number argparse was written with".
+    parser.add_argument(
+        "--poll-interval",
+        type=float,
+        default=None,
+        help="seconds an idle worker waits before looking again (default: WORKER_POLL_SECONDS)",
+    )
     parser.add_argument("--once", action="store_true", help="drain the queue and exit")
     args = parser.parse_args()
 
@@ -295,7 +323,7 @@ def main() -> int:
     configure_logging(settings.log_level, settings.log_json)
 
     if args.once:
-        worker = Worker(poll_interval=args.poll_interval)
+        worker = Worker(settings, poll_interval=args.poll_interval)
         while worker.run_once():
             pass
         print(f"drained {worker.processed} job(s)")
@@ -307,7 +335,7 @@ def main() -> int:
     for received in (signal.SIGINT, signal.SIGTERM):
         signal.signal(received, lambda *_: stop.set())
 
-    pool = WorkerPool(args.workers)
+    pool = WorkerPool(args.workers, settings, poll_interval=args.poll_interval)
     pool.start()
     while not stop.is_set():
         stop.wait(1.0)
