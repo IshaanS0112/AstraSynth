@@ -11,12 +11,7 @@ from app.config import get_settings
 
 
 def static_url(path: str | None) -> str | None:
-    """Map an absolute file path under ``storage_dir`` to its served URL.
-
-    Absolute paths are what the CV stage needs on disk, but they must never
-    reach the client. Anything outside ``storage_dir`` resolves to ``None``
-    rather than leaking a filesystem location.
-    """
+    """Map an absolute file path under ``storage_dir`` to its served URL."""
     if not path:
         return None
     try:

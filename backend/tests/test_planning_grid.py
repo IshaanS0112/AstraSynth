@@ -1,9 +1,4 @@
-"""The shared cost model.
-
-Every planner in the package searches this graph, so a bug here is a bug in all
-of them at once and none of the per-planner tests would localise it. These are
-the tests that pin the graph itself.
-"""
+"""The shared cost model."""
 
 from __future__ import annotations
 

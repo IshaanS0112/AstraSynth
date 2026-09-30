@@ -1,10 +1,4 @@
-"""Monte Carlo mission robustness.
-
-A stochastic study whose numbers cannot be reproduced is an anecdote. The seed
-discipline is therefore tested harder than the statistics: identical seeds must
-give identical results, and trial *k* must be independent of how many trials
-were requested, so a study can be extended without invalidating what came before.
-"""
+"""Monte Carlo mission robustness."""
 
 from __future__ import annotations
 

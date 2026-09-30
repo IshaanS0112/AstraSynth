@@ -1,12 +1,4 @@
-"""Theta* any-angle planning.
-
-Theta* is not optimal, so "does it return the cheapest route" is the wrong test
-and would fail for the right reasons. What it promises is route *shape*: fewer
-heading changes and a shorter Euclidean length than an 8-connected staircase,
-without ever crossing ground A* would have refused. Those are the three things
-tested here, plus the constraint checks, because a shorter route that drives
-through a cliff is not an improvement.
-"""
+"""Theta* any-angle planning."""
 
 from __future__ import annotations
 

@@ -1,24 +1,4 @@
-"""A* and Dijkstra over a :class:`PlanningGrid`.
-
-The search strategy is unchanged from V1 - same 8-connectivity, same FIFO
-tie-break, same admissible heuristic, same node counts. What changed is the
-representation it searches: the graph is compiled once into flat Python lists
-(see :mod:`compiled`) and cells are integers rather than ``(row, col)`` tuples,
-so the inner loop does list indexing instead of numpy scalar reads and
-dictionary lookups on freshly allocated tuples.
-
-That is worth stating precisely, because "we made it faster" is the kind of
-claim that usually means "we changed the answer". The expansion order is
-identical by construction - the same neighbours are visited in the same order,
-closed nodes are skipped before their edges are evaluated exactly as before, and
-ties break on the same monotonic counter. ``test_path_planner`` pins the route
-and the cost; the benchmark pins the node count.
-
-Why A* and not Dijkstra: identical optimality guarantee under an admissible
-heuristic, but Dijkstra expands uniformly in every direction while A* biases
-expansion toward the goal. ``nodes_expanded`` is recorded on every plan so the
-difference is measurable rather than asserted.
-"""
+"""A* and Dijkstra over a :class:`PlanningGrid`."""
 
 from __future__ import annotations
 
@@ -44,13 +24,7 @@ def search(
     goal: Cell,
     use_heuristic: bool = True,
 ) -> SearchResult:
-    """Best-first search from ``start`` to ``goal``.
-
-    ``use_heuristic=False`` zeroes the heuristic, which reduces the identical
-    search to Dijkstra - used by the benchmark to compare node expansions and by
-    the test suite to confirm both agree on the optimal cost, which is the
-    empirical check that the heuristic really is admissible.
-    """
+    """Best-first search from ``start`` to ``goal``."""
     graph = grid.compiled()
     cols = graph.cols
     start_index = start[0] * cols + start[1]

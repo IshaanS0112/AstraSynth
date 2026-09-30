@@ -1,17 +1,4 @@
-"""Orchestration between the HTTP layer and the mission-autonomy engines.
-
-Same rule as ``mission_pipeline``: routers validate and serialise, this module
-decides ordering and persistence, and the engines beneath it stay pure functions
-over arrays and dataclasses.
-
-One thing this layer has to be explicit about. Every engine below it that
-*executes* rather than *plans* needs a ground truth to execute against, and a
-real mission does not have one - that is the whole point of the belief model. So
-the truth is **synthesised here**, by perturbing the orbital map with hazards it
-never resolved, from a recorded seed. The response says so, and the seed and
-perturbation parameters are stored with the run, so "the rover was surprised"
-is a reproducible statement about a named scenario rather than a vague one.
-"""
+"""Orchestration between the HTTP layer and the mission-autonomy engines."""
 
 from __future__ import annotations
 
@@ -42,12 +29,7 @@ PipelineError = mission_pipeline.PipelineError
 
 @lru_cache(maxsize=1)
 def code_revision() -> str:
-    """The git revision this process is running, for experiment provenance.
-
-    Best effort: a deployment from a tarball has no git metadata, and an
-    experiment is still worth recording without it. Returns ``"unknown"``
-    rather than raising, because provenance is evidence, not a precondition.
-    """
+    """The git revision this process is running, for experiment provenance."""
     try:
         result = subprocess.run(
             ["git", "rev-parse", "--short", "HEAD"],
@@ -133,17 +115,7 @@ def load_grids(mission: Mission, settings: Settings) -> MissionGrids:
 
 
 def terrain_payload(mission: Mission, settings: Settings, max_dim: int = 128) -> dict:
-    """Every per-cell layer the mission-control view renders, in one response.
-
-    Deliberately one call rather than one per layer. The layers are the same
-    shape, computed together and toggled together; fetching them separately
-    would mean the viewer can show slope for a grid it is no longer displaying.
-
-    Downsampled again to ``max_dim`` before serialising. A 192x192 planning grid
-    is 37k floats per layer - about 1 MB of JSON across five layers, which the
-    browser parses on every mission open. The renderer interpolates anyway, so
-    resolution beyond what a mesh shows is bytes nobody sees.
-    """
+    """Every per-cell layer the mission-control view renders, in one response."""
     from app.services import hazard_mapper
 
     grids = load_grids(mission, settings)
@@ -194,13 +166,7 @@ def terrain_payload(mission: Mission, settings: Settings, max_dim: int = 128) ->
 
 
 def _slope_degrees(elevation: np.ndarray, meters_per_cell: float) -> np.ndarray:
-    """Per-cell slope from the rendered grid, for the slope layer.
-
-    Recomputed from the downsampled elevation rather than downsampling the
-    full-resolution slope map, because averaging slope over a block is not the
-    slope of the averaged block - the first smooths a ridge into a ramp. What
-    the viewer shows must be the slope of the surface it is drawing.
-    """
+    """Per-cell slope from the rendered grid, for the slope layer."""
     d_row, d_col = np.gradient(elevation.astype(np.float64), meters_per_cell)
     return np.degrees(np.arctan(np.hypot(d_row, d_col))).astype(np.float32)
 
@@ -217,15 +183,7 @@ def _synthesise_truth(
     settings: Settings,
     along: list[Cell] | None = None,
 ) -> np.ndarray:
-    """Reality: the orbital map plus hazards it never resolved.
-
-    When ``along`` is given, obstacles are placed on the route the rover is
-    about to drive. Scattering them uniformly mostly misses - on a 192-cell grid
-    a dozen two-cell rocks have a small chance of touching any particular route -
-    and a simulation whose surprises never intersect the plan measures nothing
-    about replanning. Placing them on the route is the honest way to exercise
-    the thing being demonstrated, and the response says that is what happened.
-    """
+    """Reality: the orbital map plus hazards it never resolved."""
     truth = np.clip(grids.hazard + rng.normal(0.0, terrain_sigma, grids.hazard.shape), 0.0, 1.0)
     rows, cols = grids.shape
     radius = max(1, obstacle_radius_cells)
@@ -521,13 +479,7 @@ def run_fleet_plan(
     time_budget_seconds: float = 30.0,
     coordination_max_dim: int | None = None,
 ) -> Experiment:
-    """Deconflict a fleet, each rover on its own graph.
-
-    Coordination runs on a coarser grid than navigation by default: the
-    low-level state space is cells x ticks, so halving resolution cuts it by
-    roughly eight, and the question being answered is who crosses the middle
-    first, not which rock to pass on the left.
-    """
+    """Deconflict a fleet, each rover on its own graph."""
     from app.services import hazard_mapper
 
     grids = load_grids(mission, settings)

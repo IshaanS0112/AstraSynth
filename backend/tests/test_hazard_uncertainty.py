@@ -1,11 +1,4 @@
-"""Propagated hazard uncertainty.
-
-The claim is not "we attached an uncertainty number to the hazard map". It is
-that each component's uncertainty comes from an identified error source with a
-derivation, and that they combine by the standard quadrature rule. These tests
-check the derivation, the bound, and the one behaviour it exists to enable -
-that a planner can be made to prefer known ground.
-"""
+"""Propagated hazard uncertainty."""
 
 from __future__ import annotations
 

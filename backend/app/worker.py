@@ -1,25 +1,17 @@
 """The background worker.
 
-Runs either inside the API process as a daemon thread, or on its own::
+Runs inside the API process as a daemon thread, or on its own::
 
     python -m app.worker --workers 2
 
-Both use the same loop, because the difference between them is a deployment
-decision rather than a behavioural one: the queue is in PostgreSQL, so an
-in-process worker and a separate one are simply two consumers of the same table
-and can run at the same time without coordinating.
+Same loop either way: the queue is a table, so the two are just consumers of it
+and can run at once. In-process is the default so a single-node deployment needs
+nothing extra started.
 
-In-process is the default because a single-node research deployment should not
-need a second thing to start, and because a study that takes ten seconds does not
-need a fleet. Splitting the worker out is one flag away when it does.
-
-Why a thread and not asyncio
-----------------------------
-The work is CPU-bound numpy and pure-Python search. An async task would hold the
-event loop for the whole study and stall every request on the process. A thread
-releases the GIL inside numpy, and the Monte Carlo path escapes to real processes
-anyway; the thread is there to own the database session and the lease, not to
-provide parallelism.
+A thread and not asyncio because the work is CPU-bound numpy and pure-Python
+search - an async task would hold the event loop for the whole study. The thread
+owns the database session and the lease; the Monte Carlo path gets its
+parallelism from real processes.
 """
 
 from __future__ import annotations
@@ -44,9 +36,8 @@ from app.services.simulation.monte_carlo import Perturbations
 
 logger = logging.getLogger("astrasynth.worker")
 
-# How often a running job renews its lease and publishes progress. Frequent
-# enough that a cancel is noticed promptly, rare enough that a 500-trial study
-# does not spend its time writing rows.
+# Lease renewal and progress interval: prompt enough to notice a cancel, rare
+# enough that a 500-trial study is not spent writing rows.
 HEARTBEAT_EVERY_SECONDS = 2.0
 
 
@@ -68,11 +59,8 @@ class Worker:
         lease_seconds: float | None = None,
         worker_id: str | None = None,
     ) -> None:
-        # Both timings default to `None` rather than to a literal, so that "not
-        # specified" resolves to the configured value instead of shadowing it.
-        # They used to default to 1.0 and DEFAULT_LEASE_SECONDS, which happened
-        # to equal the settings defaults - so WORKER_POLL_SECONDS and
-        # JOB_LEASE_SECONDS were inert, and changing either one did nothing.
+        # None, not a literal, so "not specified" resolves to the configured
+        # value instead of silently shadowing it.
         self.settings = settings or get_settings()
         self.poll_interval = (
             self.settings.worker_poll_seconds if poll_interval is None else poll_interval
@@ -100,9 +88,8 @@ class Worker:
     def run_once(self) -> bool:
         """Claim and run at most one job. ``True`` if there was work."""
         with SessionLocal() as db:
-            # Recovery runs on the way to work, not on a timer: a worker looking
-            # for a job is exactly when abandoned work is worth noticing, and it
-            # keeps the recovery path exercised outside of incidents.
+            # Recovery on the way to work, not on a timer: keeps the path
+            # exercised outside of incidents.
             jobs.reclaim_stale(db, self.lease_seconds)
             job = jobs.claim(db, self.worker_id)
             if job is None:
@@ -150,11 +137,7 @@ class Worker:
         return handler(db, job, mission)
 
     def _reporter(self, db: Session, job: Job):
-        """A progress callback that also renews the lease and checks for cancel.
-
-        Throttled to :data:`HEARTBEAT_EVERY_SECONDS`, but always fires on the
-        final trial so a finished study never sits at 97%.
-        """
+        """A progress callback that also renews the lease and checks for cancel."""
         state = {"last": 0.0}
 
         def report(done: int, total: int) -> bool:
@@ -200,8 +183,7 @@ class Worker:
             progress=progress,
         )
         if cancelled["flag"]:
-            # The partial study is still written - a cancelled 400-trial run that
-            # got to 300 is a result, not a loss - but the job reports CANCELLED
+            # The partial study is still written, but the job reports CANCELLED
             # so nobody reads it as the study they asked for.
             raise JobCancelled
         return experiment
@@ -269,8 +251,7 @@ class WorkerPool:
         poll_interval: float | None = None,
     ) -> None:
         self.count = count
-        # Resolved here rather than left as None, so every worker in the pool
-        # shares one Settings instance instead of each reading the environment.
+        # Resolved once so every worker shares one Settings instance.
         self.settings = settings or get_settings()
         self.poll_interval = poll_interval
         self._stop = threading.Event()
@@ -306,8 +287,7 @@ class WorkerPool:
 def main() -> int:
     parser = argparse.ArgumentParser(description="AstraSynth background worker")
     parser.add_argument("--workers", type=int, default=1, help="threads in this process")
-    # No default: omitting the flag has to mean "use WORKER_POLL_SECONDS", not
-    # "use whatever number argparse was written with".
+    # No default: omitting the flag means "use WORKER_POLL_SECONDS".
     parser.add_argument(
         "--poll-interval",
         type=float,
@@ -330,8 +310,7 @@ def main() -> int:
         return 0
 
     stop = threading.Event()
-    # SIGTERM is what a container runtime sends; without this the worker is
-    # killed mid-job and its lease has to expire before anything else picks it up.
+    # SIGTERM is what a container runtime sends: finish the job, then exit.
     for received in (signal.SIGINT, signal.SIGTERM):
         signal.signal(received, lambda *_: stop.set())
 

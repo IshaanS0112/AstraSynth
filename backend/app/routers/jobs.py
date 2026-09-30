@@ -1,11 +1,4 @@
-"""Background jobs: submit, watch, cancel.
-
-These mirror the synchronous study endpoints one for one. The synchronous ones
-stay, because a nine-weighting route sweep finishes in under a second and making
-a caller poll for that is worse than waiting for it. What the queue adds is the
-studies that cannot finish inside a request - and with them, progress,
-cancellation, and survival across a restart.
-"""
+"""Background jobs: submit, watch, cancel."""
 
 from __future__ import annotations
 
@@ -83,12 +76,7 @@ def list_jobs(
 
 @router.get("/jobs/{job_id}", response_model=JobOut)
 def get_job(job_id: uuid.UUID, db: DbSession) -> Job:
-    """Poll one job.
-
-    Deliberately not scoped under a mission: a client that submitted a job holds
-    its id and should not have to remember which mission it belonged to in order
-    to ask how it is going.
-    """
+    """Poll one job."""
     job = db.get(Job, job_id)
     if job is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Job {job_id} not found")
@@ -97,14 +85,7 @@ def get_job(job_id: uuid.UUID, db: DbSession) -> Job:
 
 @router.post("/jobs/{job_id}/cancel", response_model=JobOut)
 def cancel_job(job_id: uuid.UUID, db: DbSession) -> Job:
-    """Ask a job to stop.
-
-    Queued work is cancelled outright. Running work enters ``CANCELLING`` and
-    stops at its next checkpoint - the worker writes the terminal state itself,
-    because only it knows when stopping leaves a consistent result. A job that
-    has already finished is a 409: there is nothing to cancel, and reporting
-    success would be a lie the client might act on.
-    """
+    """Ask a job to stop."""
     job = db.get(Job, job_id)
     if job is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Job {job_id} not found")
@@ -118,12 +99,7 @@ def cancel_job(job_id: uuid.UUID, db: DbSession) -> Job:
 
 @router.get("/jobs", response_model=QueueStats)
 def queue_stats(db: DbSession, settings: AppSettings) -> QueueStats:
-    """Queue depth, and whether anything is consuming it.
-
-    ``in_process_workers`` is reported alongside the depth because the single
-    most common way a queue "breaks" is that nothing is draining it, and a depth
-    on its own does not distinguish a busy system from a stopped one.
-    """
+    """Queue depth, and whether anything is consuming it."""
     oldest = db.execute(
         select(Job.created_at)
         .where(Job.status == JobStatus.QUEUED)

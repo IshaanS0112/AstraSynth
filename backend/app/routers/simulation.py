@@ -25,12 +25,7 @@ def get_terrain_grid(
     settings: AppSettings,
     max_dim: int = Query(default=128, ge=16, le=256),
 ):
-    """Every per-cell layer the mission-control view renders, in one response.
-
-    ``max_dim`` caps the returned resolution. The default of 128 is about 16k
-    cells per layer; the renderer interpolates across a mesh anyway, so pushing
-    the full planning grid through JSON would be bytes nobody sees.
-    """
+    """Every per-cell layer the mission-control view renders, in one response."""
     try:
         return autonomy.terrain_payload(mission, settings, max_dim=max_dim)
     except autonomy.PipelineError as exc:
@@ -44,13 +39,7 @@ def simulate_traverse(
     db: DbSession,
     settings: AppSettings,
 ):
-    """Drive from start to goal without knowing the terrain in advance.
-
-    The rover plans on the orbital map, senses as it goes, and D* Lite repairs
-    the route when what it finds disagrees. Ground truth is synthesised from a
-    recorded seed - see ``parameters.truth_model`` on the response, which says
-    so explicitly rather than letting a reader assume the terrain was measured.
-    """
+    """Drive from start to goal without knowing the terrain in advance."""
     try:
         rover_config = autonomy.resolve_rover(db, payload.rover_config_id)
         return autonomy.run_traverse(
@@ -102,13 +91,7 @@ def get_traverse_events(
     category: str | None = Query(default=None),
     kind: str | None = Query(default=None),
 ) -> list[dict]:
-    """The mission event log, optionally filtered.
-
-    Filtering happens here rather than in the browser because the log is the
-    one part of a run that grows without bound - a long traverse over noisy
-    ground produces an event per step - and an operator watching for reroutes
-    should not have to download the confirmations to find them.
-    """
+    """The mission event log, optionally filtered."""
     row = db.get(TraverseRun, run_id)
     if row is None or row.mission_id != mission.id:
         raise HTTPException(

@@ -1,33 +1,14 @@
 """The queue: claiming, leasing, finishing, and reclaiming background work.
 
-The claim is one statement
---------------------------
-::
+The claim is ONE statement, not two - "read the oldest queued row, then update
+it" is a race that runs the job twice. ``FOR UPDATE`` locks the read and
+``SKIP LOCKED`` sends a second worker to the next row instead of making it wait,
+which gives a multi-consumer queue with no broker and no coordination.
 
-    UPDATE jobs SET status = 'RUNNING', ...
-    WHERE id = (
-        SELECT id FROM jobs WHERE status = 'QUEUED'
-        ORDER BY created_at
-        FOR UPDATE SKIP LOCKED
-        LIMIT 1
-    )
-    RETURNING id
-
-Not two. The obvious "read the oldest queued row, then update it" is a race:
-between the read and the write another worker reads the same row, and the job
-runs twice. ``FOR UPDATE`` makes the read take a lock; ``SKIP LOCKED`` is what
-stops the second worker from *waiting* on that lock and instead sends it to the
-next row. Together they give a multi-consumer queue with no coordination, no
-polling storm, and no broker.
-
-Delivery is at-least-once
--------------------------
-A worker can die holding a lease. The lease expires, another worker takes the
-row, and the job runs a second time. That is tolerable here for a specific
-reason rather than by hope: every job kind is deterministic in its recorded
-seed, so a re-run produces the same result rather than a second, different one.
-A job kind that was not deterministic would need an idempotency key before it
-could go through this queue.
+Delivery is therefore at-least-once: a worker can die holding a lease, and the
+next one re-runs the job. That is safe only because every job kind is
+deterministic in its recorded seed. A non-deterministic kind would need an
+idempotency key first.
 """
 
 from __future__ import annotations
@@ -41,9 +22,8 @@ from sqlalchemy.orm import Session
 from app.enums import JobStatus
 from app.models import Job, Mission
 
-# How long a claim is good for without a heartbeat. Long enough that a slow
-# trial does not look like a crash, short enough that a crash is noticed while
-# someone is still watching the request that queued it.
+# How long a claim survives without a heartbeat before another worker may take
+# it: long enough that a slow trial is not mistaken for a crash.
 DEFAULT_LEASE_SECONDS = 90.0
 
 
@@ -88,10 +68,8 @@ def claim(db: Session, worker_id: str) -> Job | None:
     if claimed is None:
         return None
 
-    # The claim is a raw UPDATE, so anything this session already has in its
-    # identity map still holds pre-claim values - and the session is configured
-    # with expire_on_commit=False, so the commit does not refresh them either.
-    # Without this the worker reads status QUEUED on a job it just claimed.
+    # The claim is a raw UPDATE and the session uses expire_on_commit=False, so
+    # without this refresh the worker reads QUEUED on a job it just claimed.
     job = db.get(Job, claimed)
     db.refresh(job)
     return job
@@ -100,13 +78,7 @@ def claim(db: Session, worker_id: str) -> Job | None:
 def heartbeat(
     db: Session, job_id: uuid.UUID, progress: float | None = None, detail: str | None = None
 ) -> bool:
-    """Renew the lease and report progress. ``False`` means stop.
-
-    The return value is how cancellation reaches a running job: the API writes
-    ``CANCELLING`` and the worker learns about it here, at a point where it is
-    safe to stop. Killing the thread instead would leave a half-written
-    experiment and no way to say which half.
-    """
+    """Renew the lease and report progress. ``False`` means stop."""
     values: dict = {"heartbeat_at": datetime.utcnow()}
     if progress is not None:
         values["progress"] = max(0.0, min(1.0, progress))
@@ -133,13 +105,7 @@ def succeed(db: Session, job: Job, experiment_id: uuid.UUID | None) -> Job:
 
 
 def fail(db: Session, job: Job, error: str) -> Job:
-    """Record a failure, and re-queue it if the job has attempts left.
-
-    Retrying is only correct because the work is deterministic; see the module
-    docstring. The attempt counter is incremented at claim time, not here, so a
-    worker that dies without reaching this function still burns an attempt and a
-    permanently-crashing job cannot spin forever.
-    """
+    """Record a failure, and re-queue it if the job has attempts left."""
     job.error = error[:4000]
     if job.attempts < job.max_attempts:
         job.status = JobStatus.QUEUED
@@ -163,12 +129,7 @@ def finish_cancelled(db: Session, job: Job) -> Job:
 
 
 def request_cancel(db: Session, job: Job) -> bool:
-    """Ask a job to stop. ``False`` if it had already finished.
-
-    A queued job is cancelled outright - nothing has started, so there is nothing
-    to unwind. A running one only enters ``CANCELLING``; the worker decides when
-    it is safe to stop and writes the terminal state itself.
-    """
+    """Ask a job to stop. ``False`` if it had already finished."""
     if job.terminal:
         return False
     job.status = JobStatus.CANCELLED if job.status == JobStatus.QUEUED else JobStatus.CANCELLING
@@ -180,12 +141,7 @@ def request_cancel(db: Session, job: Job) -> bool:
 
 
 def reclaim_stale(db: Session, lease_seconds: float = DEFAULT_LEASE_SECONDS) -> int:
-    """Return jobs whose worker stopped heartbeating, and bury the hopeless ones.
-
-    Runs before every claim rather than on a timer: a worker looking for work is
-    exactly the moment when noticing abandoned work is useful, and it means the
-    recovery path is exercised constantly instead of only during an incident.
-    """
+    """Return jobs whose worker stopped heartbeating, and bury the hopeless ones."""
     cutoff = datetime.utcnow() - timedelta(seconds=lease_seconds)
     active = (JobStatus.RUNNING.value, JobStatus.CANCELLING.value)
 

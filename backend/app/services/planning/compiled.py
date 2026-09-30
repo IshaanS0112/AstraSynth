@@ -1,38 +1,4 @@
-"""The traversable graph, materialised once, vectorised.
-
-Why this exists
----------------
-Profiling A* on a 192x192 grid put 33% of the runtime inside
-``PlanningGrid.evaluate_edge`` across 91,000 calls. None of that is search: it
-is the same eight numpy scalar reads per cell, redone every time a cell is
-touched, and redone again by the next planner over the same terrain. numpy
-scalar indexing costs a few hundred nanoseconds apiece, which is invisible once
-and ruinous a million times.
-
-So the graph is built **once**, with numpy doing all eight neighbour directions
-as whole-array slice arithmetic, and handed to the planners as flat Python
-lists. After that an edge lookup is a list index - a few nanoseconds - and the
-search loop touches no numpy at all.
-
-Two properties this has to preserve, and does:
-
-* **Identical results.** The same edges, the same costs, and the same
-  *attribution* of why a blocked edge was blocked. ``evaluate_edge`` checks
-  lethal hazard before slope, so a cell failing both is reported as a hazard
-  rejection; the masks below are composed in that order for the same reason.
-  ``test_compiled_graph`` asserts agreement edge-by-edge over random terrain.
-* **Cheap invalidation.** D* Lite changes a handful of cells per sensor
-  reading. Rebuilding 300,000 edges for eight changed ones would make the
-  incremental planner the slowest thing in the system, so
-  :meth:`recompute_cells` patches only the edges a changed cell participates
-  in - the eight into it, and the eight out of it.
-
-Flat indexing
--------------
-Cells are integers, ``index = row * cols + col``, not ``(row, col)`` tuples.
-That is not cosmetic either: a tuple key costs an allocation and a hash on every
-dictionary touch, and the search does millions of them.
-"""
+"""The traversable graph, materialised once, vectorised."""
 
 from __future__ import annotations
 
@@ -42,11 +8,9 @@ import numpy as np
 
 from app.services.planning.grid import NEIGHBOUR_OFFSETS, PlanningGrid
 
-# Above this many cells the compiled graph costs more memory than it saves
-# time - eight Python floats per cell is roughly 250 bytes, so a 1000x1000 grid
-# would be 250 MB. The planning grid is capped well below this by
-# ``planning_grid_max_dim``; the guard is here so that a caller who raises that
-# cap gets a clear refusal instead of an out-of-memory kill.
+# Eight floats per cell is ~250 bytes, so a 1000x1000 grid would be 250 MB.
+# planning_grid_max_dim keeps us well below this; the guard turns a raised cap
+# into a clear refusal rather than an out-of-memory kill.
 MAX_COMPILED_CELLS = 500_000
 
 
@@ -55,14 +19,7 @@ class GraphTooLargeError(RuntimeError):
 
 
 class CompiledGraph:
-    """Eight outgoing edges per cell, as flat lists of destinations and costs.
-
-    ``neighbour[k][i]`` is the flat index of cell ``i``'s neighbour in direction
-    ``k``, or ``-1`` if that direction leaves the grid. ``cost[k][i]`` is the
-    edge cost, or ``inf`` if the edge is not traversable. The two are kept
-    separate because "off the grid" and "blocked" are different facts: the first
-    never changes, the second does every time the rover learns something.
-    """
+    """Eight outgoing edges per cell, as flat lists of destinations and costs."""
 
     __slots__ = (
         "blocked_hazard",
@@ -103,8 +60,7 @@ class CompiledGraph:
             by_hazard = np.zeros((rows, cols), dtype=bool)
             by_slope = np.zeros((rows, cols), dtype=bool)
 
-            # The sub-rectangle of source cells whose neighbour in this
-            # direction is still inside the grid.
+            # Source cells whose neighbour in this direction is still in bounds.
             r0, r1 = max(0, -d_row), rows - max(0, d_row)
             c0, c1 = max(0, -d_col), cols - max(0, d_col)
             if r0 >= r1 or c0 >= c1:
@@ -131,10 +87,8 @@ class CompiledGraph:
                 corner_b = grid.hazard[(slice(r0 + d_row, r1 + d_row), slice(c0, c1))]
                 lethal = lethal | (corner_a >= grid.max_hazard) | (corner_b >= grid.max_hazard)
 
-            # Order matters: evaluate_edge tests hazard before slope, so a cell
-            # failing both is attributed to hazard. The diagnostics downstream
-            # pick a failure mode from whichever counter dominates, so getting
-            # this backwards would change what a failed mission is blamed on.
+            # Order matters: evaluate_edge tests hazard before slope, and the
+            # dominant counter decides what a failed mission is blamed on.
             steep = (~lethal) & (np.abs(gradient) > max_slope_tan)
 
             by_hazard[src] = lethal
@@ -171,12 +125,7 @@ class CompiledGraph:
         return divmod(index, self.cols)
 
     def heuristics_to(self, goal: int) -> list[float]:
-        """Straight-line distance from every cell to ``goal``, in metres.
-
-        Computed for the whole grid in one numpy call because the goal is fixed
-        for the duration of a search: 36,000 cells at once beats 36,000
-        ``math.hypot`` calls interleaved with the heap.
-        """
+        """Straight-line distance from every cell to ``goal``, in metres."""
         goal_row, goal_col = divmod(goal, self.cols)
         rows = np.arange(self.rows, dtype=np.float64)[:, None] - goal_row
         cols = np.arange(self.cols, dtype=np.float64)[None, :] - goal_col
@@ -185,14 +134,7 @@ class CompiledGraph:
     # --- incremental maintenance ---------------------------------------------
 
     def recompute_cells(self, grid: PlanningGrid, cells: list[tuple[int, int]]) -> None:
-        """Patch the edges a changed cell participates in.
-
-        A cell's hazard appears in the cost of the eight edges *into* it, and its
-        elevation in the eight edges out of it as well, so both directions are
-        rebuilt. Diagonal corner-cutting means a change can also block a diagonal
-        that merely clips the cell, so the eight neighbours' own edges are
-        refreshed too.
-        """
+        """Patch the edges a changed cell participates in."""
         touched: set[tuple[int, int]] = set()
         for cell in cells:
             touched.add(cell)

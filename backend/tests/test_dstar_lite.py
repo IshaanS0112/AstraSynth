@@ -1,11 +1,4 @@
-"""D* Lite incremental replanning.
-
-The correctness claim is specific and falsifiable: after any sequence of moves
-and map updates, the route D* Lite holds must be the route a fresh A* would
-compute on the current map, at the same cost. If that fails, the efficiency
-claim is worthless, so it is tested first and on randomised input rather than a
-hand-picked case.
-"""
+"""D* Lite incremental replanning."""
 
 from __future__ import annotations
 
@@ -101,14 +94,7 @@ class TestIncrementality:
         assert planner.stats.replan_count == before
 
     def test_repair_is_cheaper_than_replanning_from_scratch(self):
-        """The reason D* Lite exists, measured on the case it is for.
-
-        Small local surprises discovered as the rover drives - which is what a
-        sensor produces. On a *global* map change D* Lite has no advantage and
-        can be worse; that is a real property of the algorithm and the reason
-        this test is written around a sensing pattern rather than around a
-        single large reveal.
-        """
+        """The reason D* Lite exists, measured on the case it is for."""
         rng = np.random.default_rng(4)
         hazard = rng.random((60, 60)) * 0.5
         elevation = rng.random((60, 60)) * 0.5

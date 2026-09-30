@@ -59,15 +59,7 @@ def terrain(size: int, seed: int = 42) -> tuple[np.ndarray, np.ndarray]:
 
 
 def obstacle_field(size: int, seed: int = 42, rocks: int | None = None):
-    """Mostly-open ground with discrete impassable rocks.
-
-    The terrain any-angle planning is actually for. On a continuous random cost
-    field there is no straight line to find - every cell costs something
-    different, so the cheapest route genuinely wanders and Theta* has nothing to
-    straighten. On open ground broken by discrete obstacles the optimal route is
-    a sequence of straight runs between rock corners, which is exactly what the
-    8-connected grid cannot express and what Theta* recovers.
-    """
+    """Mostly-open ground with discrete impassable rocks."""
     rng = np.random.default_rng(seed)
     hazard = rng.random((size, size)) * 0.05
     elevation = np.zeros((size, size))

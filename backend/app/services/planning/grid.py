@@ -1,47 +1,23 @@
 """The one cost model every planner in this package shares.
 
-Why this module exists
-----------------------
-V1 had a single planner with the cost function inlined in its search loop. The
-moment a second planner exists that arrangement stops working: two planners with
-two copies of the cost function cannot be compared, because any difference in
-result is ambiguous between "different search strategy" and "different graph".
+A* / Theta* / D* Lite / CBS all call ``PlanningGrid.evaluate_edge``, so a
+benchmark that reports different node counts for the same optimal cost is
+reporting a real difference in search rather than a different graph.
 
-So the graph lives here and the search strategies live elsewhere. ``A*``,
-``Theta*``, ``D* Lite`` and the low-level search inside ``CBS`` all call
-``PlanningGrid.evaluate_edge``; a benchmark that reports different node counts
-for the same optimal cost is therefore reporting something real.
-
-The cost model
---------------
 For a move from cell ``a`` to an 8-connected neighbour ``b``::
 
     cost(a, b) = distance_m(a, b) * (1 + w_hazard * hazard(b))
                                   * (1 + w_energy * k * |rise / run|)
 
-with ``w_hazard = w_energy = 1`` by default, which reproduces the V1 function
-exactly. The two weights exist so the multi-objective sweep in ``pareto.py`` can
-re-shape the same graph without any planner knowing it happened.
+Two constraint layers: a cost layer ``(1 + hazard)``, bounded by 2, which shapes
+the route inside drivable ground, and a lethal layer (``max_hazard`` and the
+rover's slope limit) which removes edges from the graph. The cost layer is a
+preference, never a prohibition - doubling one cell cannot outweigh a
+fifteen-cell detour - which is why the lethal layer is not optional.
 
-Two constraint layers, unchanged from V1:
-
-* **cost layer** - ``(1 + hazard)``, bounded by 2, which shapes the route inside
-  ground that is traversable at all;
-* **lethal layer** - ``max_hazard`` and the rover's slope limit, which remove
-  edges from the graph entirely.
-
-The cost layer alone is a preference and never a prohibition: doubling the price
-of one cell will never outweigh a fifteen-cell detour. That is why the lethal
-layer is not optional decoration.
-
-Admissibility
--------------
-``hazard >= 0`` and ``energy_factor >= 1``, so every edge satisfies
-``cost(a, b) >= distance_m(a, b)`` for any non-negative weights. Straight-line
-distance in metres therefore never overestimates the remaining cost: the
-heuristic is admissible for A*, for Theta* and for D* Lite, and consistent, so
-none of them need to re-open a closed node. ``heuristic_is_admissible`` states
-the precondition in code rather than only in a docstring.
+Since ``hazard >= 0`` and ``energy_factor >= 1``, every edge satisfies
+``cost >= distance_m``, so straight-line distance is an admissible and consistent
+heuristic for all four planners. ``heuristic_is_admissible`` asserts it in code.
 """
 
 from __future__ import annotations
@@ -52,8 +28,8 @@ from enum import Enum
 
 import numpy as np
 
-# 8-connected grid. Diagonals cost sqrt(2) cells, which the distance term
-# handles naturally because it is computed in metres.
+# 8-connected. Diagonals cost sqrt(2) cells, handled naturally by measuring
+# distance in metres.
 NEIGHBOUR_OFFSETS: tuple[tuple[int, int], ...] = (
     (-1, 0),
     (1, 0),
@@ -69,20 +45,11 @@ Cell = tuple[int, int]  # (row, col) in planning-grid coordinates
 
 
 class PathNotFoundError(RuntimeError):
-    """No traversable route exists between start and goal for this rover.
-
-    Raised when the open set is exhausted - because the rover's slope limit or
-    the lethal-hazard threshold walls off every corridor to the goal.
-    """
+    """No traversable route exists between start and goal for this rover."""
 
 
 class EdgeBlock(str, Enum):
-    """Why an edge is absent from the graph.
-
-    Counting these is what turns "no path found" into a diagnosis. A traverse
-    blocked by 40,000 slope rejections and zero hazard rejections is a rover
-    problem; the reverse is a terrain problem.
-    """
+    """Why an edge is absent from the graph."""
 
     SLOPE = "slope_limit"
     LETHAL_HAZARD = "lethal_hazard"
@@ -91,56 +58,31 @@ class EdgeBlock(str, Enum):
 
 @dataclass(slots=True)
 class RoverSpec:
-    """Planner-facing view of a rover configuration.
-
-    ``mass_kg`` and ``payload_kg`` are carried so the energy model can scale
-    with what the rover is actually hauling. They default to a nominal
-    survey-class rover so every V1 call site keeps working untouched, and the
-    default gives ``payload_factor == 1.0`` exactly - V1 energy numbers are
-    reproduced to the bit unless a caller opts in.
-    """
+    """Planner-facing view of a rover configuration."""
 
     battery_capacity_kwh: float
     max_traversable_slope_deg: float
     energy_per_meter_kwh: float
     mass_kg: float = 250.0
     payload_kg: float = 0.0
-    # Fraction of nominal speed retained on maximally rough ground. 1.0 means
-    # roughness does not slow the rover at all, which is the V1 behaviour.
+    # Speed retained on maximally rough ground; 1.0 = roughness does not slow it.
     roughness_speed_penalty: float = 0.0
     nominal_speed_ms: float = 0.05
 
     def payload_factor(self) -> float:
-        """Energy multiplier from hauling ``payload_kg`` on a ``mass_kg`` chassis.
-
-        Rolling resistance is proportional to normal force, so energy per metre
-        scales with total mass. This is that first-order relation and nothing
-        more - no drivetrain efficiency curve, no soil mechanics.
-        """
+        """Energy multiplier from hauling ``payload_kg`` on a ``mass_kg`` chassis."""
         if self.mass_kg <= 0:
             raise ValueError("mass_kg must be positive")
         return (self.mass_kg + self.payload_kg) / self.mass_kg
 
 
 def energy_factor(rise_over_run: float, k: float) -> float:
-    """Multiplier on per-metre energy draw for a given incline.
-
-    Uses ``|rise/run|`` - descending is charged the same as climbing. Real
-    rovers recover nothing on a descent but do spend less than on the
-    equivalent climb, so this over-charges downhill segments. Documented as a
-    known simplification rather than silently ignored (see docs/architecture.md).
-    """
+    """Multiplier on per-metre energy draw for a given incline."""
     return 1.0 + k * abs(rise_over_run)
 
 
 def heuristic_is_admissible(hazard_weight: float, energy_weight: float) -> bool:
-    """Whether straight-line distance still lower-bounds cost at these weights.
-
-    Both weights being non-negative is exactly the condition under which
-    ``cost >= distance_m``. A negative weight - a planner *rewarded* for hazard -
-    would break the bound and silently make every "optimal" path a lie, so the
-    grid refuses to be built with one.
-    """
+    """Whether straight-line distance still lower-bounds cost at these weights."""
     return hazard_weight >= 0.0 and energy_weight >= 0.0
 
 
@@ -169,12 +111,7 @@ class PlannedPath:
 
 
 class PlanningGrid:
-    """A rover, a terrain, and the graph the two of them imply.
-
-    Instances are read-only with respect to terrain except through
-    :meth:`apply_hazard_update`, which exists so D* Lite can be handed newly
-    sensed ground and told exactly which cells moved.
-    """
+    """A rover, a terrain, and the graph the two of them imply."""
 
     __slots__ = (
         "_compiled",
@@ -230,12 +167,7 @@ class PlanningGrid:
         self._compiled = None
 
     def compiled(self):
-        """The graph as flat lists, built once and cached on first search.
-
-        Built lazily rather than in ``__init__`` because plenty of grids are
-        constructed only to measure a route or read a hazard value, and
-        compiling 300,000 edges for that would be pure loss.
-        """
+        """The graph as flat lists, built once and cached on first search."""
         if self._compiled is None:
             from app.services.planning.compiled import CompiledGraph
 
@@ -286,18 +218,7 @@ class PlanningGrid:
         return float(self.elevation[b] - self.elevation[a]) / run_m
 
     def evaluate_edge(self, a: Cell, b: Cell) -> tuple[float | None, EdgeBlock | None]:
-        """``(cost, None)`` if the move is legal, ``(None, reason)`` if it is not.
-
-        Returning the reason rather than a bare ``None`` is what lets a failed
-        plan report *why* it failed instead of the useless ``False`` that the
-        V1 planner's caller had to interpret for itself.
-
-        Diagonal moves additionally require both cells the diagonal clips to be
-        non-lethal - the standard no-corner-cutting rule. Checking only the
-        destination lets a route squeeze between two lethal cells that touch at a
-        corner, which is geometrically through both of them. See
-        docs/architecture.md, "Bugs found".
-        """
+        """``(cost, None)`` if the move is legal, ``(None, reason)`` if it is not."""
         if not self.in_bounds(b):
             return None, EdgeBlock.OUT_OF_BOUNDS
 
@@ -305,8 +226,8 @@ class PlanningGrid:
         if float(self.hazard[b]) >= self.max_hazard:
             return None, EdgeBlock.LETHAL_HAZARD
 
-        # No corner cutting: a diagonal passes through the corners of the two
-        # orthogonally adjacent cells, so a lethal one on either side blocks it.
+        # No corner cutting: a diagonal clips both orthogonal neighbours, so a
+        # lethal cell on either side blocks it.
         if (
             a[0] != b[0]
             and a[1] != b[1]
@@ -320,8 +241,7 @@ class PlanningGrid:
         step_m = self.distance_m(a, b)
         gradient = (float(self.elevation[b] - self.elevation[a]) / step_m) if step_m else 0.0
 
-        # Hard traversability constraint - what makes a mission genuinely
-        # INFEASIBLE rather than merely expensive.
+        # Hard constraint: makes a mission INFEASIBLE, not merely expensive.
         if abs(gradient) > self._max_slope_tan:
             return None, EdgeBlock.SLOPE
 
@@ -336,14 +256,7 @@ class PlanningGrid:
         return self.evaluate_edge(a, b)[0]
 
     def step_energy_kwh(self, a: Cell, b: Cell) -> float:
-        """Energy for one move, in kWh. Independent of the search cost function.
-
-        Search cost and energy are deliberately different quantities: search
-        cost carries the hazard preference and the objective weights, energy is
-        physics-facing and must stay comparable against a battery capacity in
-        the risk engine. Conflating them would make a route look cheap on a
-        planner that happens to weight hazard lightly.
-        """
+        """Energy for one move, in kWh. Independent of the search cost function."""
         step_m = self.distance_m(a, b)
         if step_m == 0.0:
             return 0.0
@@ -356,13 +269,7 @@ class PlanningGrid:
         )
 
     def traverse_seconds(self, a: Cell, b: Cell) -> float:
-        """Wall-clock duration of one move at the rover's roughness-derated speed.
-
-        With the default ``roughness_speed_penalty`` of 0 this is simply
-        distance over nominal speed. Roughness is read from the hazard grid,
-        which is the only per-cell surface signal a ``PlanningGrid`` carries -
-        an approximation, and named as one.
-        """
+        """Wall-clock duration of one move at the rover's roughness-derated speed."""
         if self.rover.nominal_speed_ms <= 0:
             raise ValueError("nominal_speed_ms must be positive")
         derate = 1.0 - self.rover.roughness_speed_penalty * float(self.hazard[b])
@@ -372,15 +279,7 @@ class PlanningGrid:
     # --- any-angle support --------------------------------------------------
 
     def supercover_cells(self, a: Cell, b: Cell) -> list[Cell]:
-        """Every cell a straight segment from ``a`` to ``b`` passes through.
-
-        Plain Bresenham is not enough for a traversability check: it skips the
-        corner cells a line clips through on a diagonal, so a segment can pass
-        "through" a wall whose only opening is a corner touch. This walks the
-        supercover instead - the set of all cells the segment intersects - which
-        is the set Theta* has to test if its line-of-sight claim is to mean what
-        it says.
-        """
+        """Every cell a straight segment from ``a`` to ``b`` passes through."""
         (row0, col0), (row1, col1) = a, b
         d_row, d_col = abs(row1 - row0), abs(col1 - col0)
         step_row = 1 if row1 > row0 else -1
@@ -401,8 +300,7 @@ class PlanningGrid:
                 row += step_row
                 error += d_col2
             else:
-                # Exactly through the corner: both neighbours are clipped, and
-                # both have to be reported or the check has a hole in it.
+                # Exactly through the corner: both neighbours are clipped.
                 if (row + step_row, col) != (row1, col1):
                     cells.append((row + step_row, col))
                 if (row, col + step_col) != (row1, col1):
@@ -417,39 +315,12 @@ class PlanningGrid:
     def segment(
         self, a: Cell, b: Cell, samples_per_cell: float = 2.0
     ) -> tuple[float | None, EdgeBlock | None, float]:
-        """Cost of driving the straight line ``a -> b``, ignoring the grid graph.
-
-        Returns ``(cost, block_reason, mean_hazard)``.
-
-        The cost is a Riemann approximation of the line integral
-
-            integral over the segment of (1 + w_h * hazard) * (1 + w_e * k * |dz/ds|) ds
-
-        sampled at ``samples_per_cell`` points per cell of length. It is an
-        approximation and is labelled one: a segment cost computed this way is
-        not identical to the sum of the 8-connected steps that shadow it, which
-        is exactly why Theta* is documented as a non-optimal planner rather than
-        being quietly compared against A* as though the two searched the same
-        graph.
-
-        Feasibility is *not* approximated, and is deliberately the *same* test
-        the grid step applies: every supercover cell is checked against the
-        lethal-hazard layer, and the gradient is checked between consecutive
-        supercover cells - which are adjacent, so the baseline is one cell, the
-        same baseline ``evaluate_edge`` uses. Checking it between sub-cell
-        samples instead would divide a per-cell elevation difference by half a
-        cell and report twice the real slope. A segment that dips through a
-        ravine is still rejected, because the ravine's cells are on the
-        supercover path even when the net rise is zero.
-        """
+        """Cost of driving the straight line ``a -> b``, ignoring the grid graph."""
         if not self.in_bounds(a) or not self.in_bounds(b):
             return None, EdgeBlock.OUT_OF_BOUNDS, 0.0
 
-        # The cell being left is excluded, matching `evaluate_edge`: the rule is
-        # that lethal ground cannot be *entered*, not that it cannot be escaped.
-        # A rover whose belief update puts it on a newly-lethal cell has to be
-        # able to drive off it, and D* Lite relies on exactly that. Checking the
-        # origin here made `segment` refuse routes the grid step allows.
+        # path[1:] skips the origin, matching `evaluate_edge`: lethal ground
+        # cannot be *entered*, but a rover standing on it must be able to leave.
         path = self.supercover_cells(a, b)
         for cell in path[1:]:
             if float(self.hazard[cell]) >= self.max_hazard:
@@ -468,21 +339,11 @@ class PlanningGrid:
 
         ds_m = (length_cells * self.meters_per_cell) / (steps - 1)
 
-        # Slope is measured between consecutive *distinct cells along the line*,
-        # over their real separation. Two things this gets right that the
-        # obvious versions do not:
-        #
-        # The elevation field is piecewise constant per cell, so differencing it
-        # at sub-cell sample spacing and dividing by that spacing inflates every
-        # gradient by the sampling rate - at two samples per cell, exactly
-        # double. Theta* was rejecting segments the grid step accepts, so the
-        # two halves of one cost model disagreed about what is drivable.
-        #
-        # And the supercover list is a *set* of clipped cells, not a traversal
-        # order: on an exact diagonal it carries both corner cells, and reading
-        # consecutive entries as a path invents a step between two cells the
-        # rover never drives between. The sampled sequence follows the line.
-        # See docs/architecture.md, "Bugs found".
+        # Gradients go between consecutive DISTINCT cells over their real
+        # separation. Elevation is piecewise constant per cell, so differencing at
+        # sub-cell spacing inflates every gradient by the sampling rate. And the
+        # supercover list is a set, not a traversal order, so it cannot be walked
+        # as a path. See docs/architecture.md bugs 17-18.
         walked = [tuple(int(v) for v in pair) for pair in zip(*sample_cells, strict=False)]
         previous = walked[0]
         for cell in walked[1:]:
@@ -496,9 +357,7 @@ class PlanningGrid:
 
         gradients = np.abs(np.diff(elevations)) / max(ds_m, self.meters_per_cell)
 
-        # Midpoint rule for the cost: each sub-interval is charged the hazard of
-        # its far end. The gradient term uses a baseline of at least one cell,
-        # for the same reason the feasibility check does.
+        # Midpoint rule: each sub-interval is charged the hazard of its far end.
         cost = float(
             np.sum(
                 ds_m
@@ -518,9 +377,8 @@ class PlanningGrid:
         cols = np.linspace(a[1], b[1], steps)
         elevations = self.elevation[(np.rint(rows).astype(int), np.rint(cols).astype(int))]
         ds_m = (length_cells * self.meters_per_cell) / (steps - 1)
-        # Same baseline correction as `segment`: a per-cell elevation field
-        # differenced at sub-cell spacing reports inflated gradients, and this
-        # one feeds an energy figure that gets compared against a battery.
+        # Same one-cell gradient baseline as `segment`; this figure is compared
+        # against a battery capacity.
         gradients = np.abs(np.diff(elevations)) / max(ds_m, self.meters_per_cell)
         return float(
             np.sum(
@@ -537,17 +395,7 @@ class PlanningGrid:
     def elevation_line_of_sight(
         self, a: Cell, b: Cell, height_a: float = 0.0, height_b: float = 0.0
     ) -> bool:
-        """Whether terrain between ``a`` and ``b`` clears the straight sight line.
-
-        Purely geometric: a straight line is drawn from ``elevation[a] + height_a``
-        to ``elevation[b] + height_b`` and every supercover cell between them is
-        tested against it. No atmospheric refraction, no Fresnel zone, no antenna
-        pattern - which is why it is named for what it does.
-
-        Shared by the sensor model (can the rover see that cell?) and the
-        communications model (can the rover reach that relay?), because they are
-        the same question asked about different endpoints.
-        """
+        """Whether terrain between ``a`` and ``b`` clears the straight sight line."""
         if a == b:
             return True
         path = self.supercover_cells(a, b)
@@ -565,14 +413,7 @@ class PlanningGrid:
     # --- mutation (for belief-driven replanning) ----------------------------
 
     def apply_hazard_update(self, updates: dict[Cell, float]) -> list[Cell]:
-        """Write new hazard values in place; return the cells that actually moved.
-
-        D* Lite's whole advantage is that it repairs only the part of the search
-        tree an update touched, so it needs the *changed* set, not the *sensed*
-        set. Re-sensing ground the rover already knew must produce an empty list
-        or the repair degenerates into a full replan while still claiming to be
-        incremental.
-        """
+        """Write new hazard values in place; return the cells that actually moved."""
         changed: list[Cell] = []
         for cell, value in updates.items():
             if not self.in_bounds(cell):
@@ -581,9 +422,7 @@ class PlanningGrid:
                 self.hazard[cell] = float(value)
                 changed.append(cell)
         if changed and self._compiled is not None:
-            # Patch, never rebuild. A sensor reading changes a handful of cells;
-            # recompiling the whole graph for them would make the incremental
-            # planner slower than the one it replaced.
+            # Patch, never rebuild: a sensor reading touches a handful of cells.
             self._compiled.recompute_cells(self, changed)
         return changed
 

@@ -1,33 +1,4 @@
-"""Optional shared-secret authentication for the whole HTTP surface.
-
-Why a shared key and not OAuth
-------------------------------
-This is a single-tenant research platform. There are no user accounts, nothing
-is scoped per-person, and every caller that can reach the API is entitled to
-everything in it - so the only question worth answering at the edge is "is this
-caller one of ours". A shared secret answers exactly that question and nothing
-more, which is honest about the model rather than dressing it up. The moment
-missions belong to *people* this becomes the wrong mechanism, and that is the
-point at which to replace it rather than extend it.
-
-Why it defaults to off
-----------------------
-``API_KEY`` unset means every endpoint is open, which is what the offline demo,
-the Docker Compose quick start and CI all rely on. Turning authentication on by
-default would mean shipping a default credential, and a default credential is
-worse than none: it is a published one.
-
-Why middleware and not a dependency
------------------------------------
-A ``Depends`` on each router is the idiomatic FastAPI answer and it would have
-left a hole. ``/static`` is a mounted ``StaticFiles`` app, not a router - it
-serves the uploaded terrain tiles and the rendered hazard overlays, which are
-mission data, and a dependency cannot be attached to it. Middleware sees every
-request including that mount. The security scheme is declared separately on the
-OpenAPI document so that ``/docs`` still shows the padlock and lets a reader
-authorise, which is the one thing the dependency approach would have given for
-free.
-"""
+"""Optional shared-secret authentication for the whole HTTP surface."""
 
 from __future__ import annotations
 
@@ -42,22 +13,14 @@ logger = logging.getLogger("astrasynth.security")
 
 API_KEY_HEADER = "X-API-Key"
 
-# The minimum length a configured key is allowed to be. A four-character shared
-# secret is not weak protection, it is *false* protection: it makes a deployment
-# feel closed while being trivially guessable, and someone would reasonably stop
-# worrying about the network in front of it. Refusing to start is the safer
-# failure.
+# A guessable key is false protection, not weak protection: it makes a
+# deployment feel closed. Refusing to start is the safer failure.
 MIN_KEY_LENGTH = 16
 
-# Probes and the API's own description stay open even with a key set.
-#
-# /health and /ready are read by a container runtime, which generally cannot be
-# given a credential and whose failure to reach them gets the process killed -
-# authentication on a liveness probe is a way to cause the outage it is meant to
-# survive. /docs and /openapi.json describe the shape of the API without
-# containing any mission data, and closing them breaks the docs page (the Swagger
-# UI cannot send a header to fetch its own schema). Neither exposes anything a
-# reader of this repository does not already have.
+# Open even with a key set. The probes are read by a container runtime that
+# cannot be given a credential, and failing them gets the process killed. /docs
+# describes the API's shape, not its data, and Swagger UI cannot send a header to
+# fetch its own schema.
 OPEN_PATHS = frozenset(
     {
         "/health",
@@ -85,12 +48,7 @@ def validate_api_key(api_key: str) -> str:
 
 
 def presented_key(request: Request) -> str | None:
-    """The credential this request carries, from either accepted form.
-
-    ``X-API-Key`` is the documented header. ``Authorization: Bearer`` is accepted
-    too because every HTTP client already knows how to send it, and refusing it
-    would mean a caller has to special-case this API for no benefit.
-    """
+    """The credential this request carries, from either accepted form."""
     direct = request.headers.get(API_KEY_HEADER)
     if direct:
         return direct
@@ -112,17 +70,13 @@ class ApiKeyMiddleware(BaseHTTPMiddleware):
         if not self.api_key:
             return await call_next(request)
 
-        # A browser preflight cannot carry the key: the whole purpose of the
-        # preflight is to ask whether the header may be sent. Rejecting it would
-        # make the API unreachable from the dashboard while looking like a CORS
-        # bug. The response to OPTIONS carries no mission data.
+        # A preflight cannot carry the key - it exists to ask whether the header
+        # may be sent - and rejecting it looks like a CORS bug.
         if request.method == "OPTIONS" or request.url.path in OPEN_PATHS:
             return await call_next(request)
 
         candidate = presented_key(request)
-        # compare_digest rather than ==, so the comparison does not leak the
-        # length of the shared prefix through its timing. The cost is nothing and
-        # the alternative is a defect nobody notices in review.
+        # compare_digest, not ==: do not leak the shared prefix length by timing.
         if candidate is None or not compare_digest(candidate, self.api_key):
             logger.warning(
                 "rejected unauthenticated request",
@@ -141,13 +95,7 @@ class ApiKeyMiddleware(BaseHTTPMiddleware):
 
 
 def declare_security_scheme(app: FastAPI, api_key: str) -> None:
-    """Advertise the scheme on the OpenAPI document, so /docs offers Authorize.
-
-    Done by wrapping ``app.openapi`` rather than by declaring dependencies,
-    because enforcement lives in middleware - see the module docstring. The
-    scheme is only declared when a key is actually configured: a padlock on an
-    open API would be a documented lie.
-    """
+    """Advertise the scheme on the OpenAPI document, so /docs offers Authorize."""
     if not api_key:
         return
 

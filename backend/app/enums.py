@@ -1,9 +1,4 @@
-"""Domain enumerations.
-
-``str, Enum`` rather than ``StrEnum`` so the backend runs on Python 3.10 as well
-as 3.11+. Values are always accessed via ``.value`` when serialising, so the
-3.11 change to ``__format__`` is not a hazard either way.
-"""
+"""Domain enumerations."""
 
 from enum import Enum
 
@@ -29,13 +24,7 @@ class RiskTier(str, Enum):
 
 
 class JobStatus(str, Enum):
-    """Where a background job is.
-
-    ``CANCELLING`` exists because cancellation is cooperative: the API records
-    the intent, and the worker notices at its next checkpoint. Collapsing it into
-    ``CANCELLED`` would tell a client the work had stopped while it was still
-    running.
-    """
+    """Where a background job is."""
 
     QUEUED = "QUEUED"
     RUNNING = "RUNNING"

@@ -1,15 +1,4 @@
-"""Migrations and models must describe the same schema.
-
-The failure this exists to prevent is quiet. Someone adds a column to a model;
-the tests bootstrap with ``create_all`` and pass; the deployment runs
-``alembic upgrade head`` and gets a table without that column. Nothing errors
-until the first query touches it, in production, at which point the fix is a
-hotfix migration written under pressure.
-
-So the check is mechanical: build a database from the migrations alone, then ask
-Alembic to autogenerate against the models. A non-empty result means they have
-diverged, and the test prints what Alembic thinks is missing.
-"""
+"""Migrations and models must describe the same schema."""
 
 from __future__ import annotations
 
@@ -47,12 +36,7 @@ pytestmark = pytest.mark.skipif(
 
 @pytest.fixture(scope="module")
 def scratch_database():
-    """A throwaway database, so the migrations run against nothing at all.
-
-    Reusing the main test database would test whether migrations apply *on top
-    of* a schema ``create_all`` already built, which is a different and much
-    weaker claim.
-    """
+    """A throwaway database, so the migrations run against nothing at all."""
     from sqlalchemy import create_engine, text
 
     name = f"astra_mig_{uuid.uuid4().hex[:10]}"
@@ -152,20 +136,7 @@ class TestMigrations:
 
 
 class TestMigratingDoesNotDisturbTheProcess:
-    """Applying a migration must not reconfigure the application's logging.
-
-    Alembic's ``env.py`` calls ``fileConfig`` on ``alembic.ini``, which is right
-    for the CLI and destructive in-process: it defaults to
-    ``disable_existing_loggers=True``, and that file sets the root logger to
-    WARNING with a plain console handler. Because the API applies migrations on
-    boot by default, the effect was that every structured request log line
-    disappeared for the life of the process - the JSON handler was replaced and
-    the level was raised above INFO. Nothing failed, and there was no error to
-    find: the logs were simply gone.
-
-    Both assertions matter. The handler identity catches the formatter being
-    swapped; the level catches INFO being filtered out even if a handler survives.
-    """
+    """Applying a migration must not reconfigure the application's logging."""
 
     def test_the_configured_handler_and_level_survive(self, scratch_database):
         import logging
@@ -192,13 +163,7 @@ class TestMigratingDoesNotDisturbTheProcess:
             root.setLevel(saved_level)
 
     def test_the_cli_path_still_configures_its_own_logging(self):
-        """The guard must not disable alembic's logging for actual CLI use.
-
-        ``configure_logger`` defaults to True, so a plain ``alembic upgrade head``
-        is unaffected; only a caller that sets it False opts out. Asserted on the
-        attribute rather than by running the CLI, because what is being checked is
-        which side of the branch each caller lands on.
-        """
+        """The guard must not disable alembic's logging for actual CLI use."""
         from app.db.migrate import _alembic_config
 
         programmatic = _alembic_config("postgresql+psycopg2://unused/none")

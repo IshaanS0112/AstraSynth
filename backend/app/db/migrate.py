@@ -1,16 +1,4 @@
-"""Bringing the schema up to date at startup.
-
-``create_all`` was right while the schema was append-only: it is one line, it
-needs no tooling, and adding a table beside the old ones cannot damage data.
-That stopped being true once columns started changing shape, so the migrations
-are now the source of truth and this is what applies them.
-
-``create_all`` remains as a fallback for the one case it is still correct in: a
-checkout without Alembic installed, running against a throwaway database. It
-logs loudly when it happens, because silently building a schema that no
-migration describes is exactly the drift ``tests/test_migrations.py`` exists to
-catch.
-"""
+"""Bringing the schema up to date at startup."""
 
 from __future__ import annotations
 
@@ -74,13 +62,7 @@ def _adopt_existing_schema(database_url: str) -> bool:
 
 
 def upgrade_to_head(database_url: str) -> str:
-    """Apply outstanding migrations. Returns the revision now in place.
-
-    Safe to run on every boot: with nothing outstanding it is one query against
-    ``alembic_version``. Safe to run from several processes at once, because the
-    migration runs inside a transaction and PostgreSQL takes DDL locks - a second
-    process either waits or finds the work already done.
-    """
+    """Apply outstanding migrations. Returns the revision now in place."""
     from sqlalchemy import create_engine
 
     from alembic import command

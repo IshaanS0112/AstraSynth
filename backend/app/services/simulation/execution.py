@@ -1,25 +1,4 @@
-"""Driving a planned route against terrain the rover cannot fully see.
-
-This is where the three layers meet. The simulator holds reality; the rover
-holds a belief and a sensor; D* Lite repairs the route when the two disagree.
-The output is an executed path plus a timestamped event log - the same log the
-mission-control event stream renders, and the same one the Monte Carlo evaluator
-aggregates over a thousand runs.
-
-The loop, per step:
-
-1. sense - noisy readings of reality within range and line of sight;
-2. update - fold them into the belief; get back only what actually changed;
-3. repair - hand the changed cells to D* Lite, which fixes the affected part of
-   the search tree and nothing else;
-4. step - move one cell along the repaired route;
-5. account - charge energy and time against the *true* terrain, not the believed
-   terrain, because the battery does not care what the rover expected.
-
-Point 5 is the one that makes the simulation worth running. A rover that plans
-optimistically and is charged optimistically always succeeds. Charging the truth
-is what lets a mission fail for the reason a real one would.
-"""
+"""Driving a planned route against terrain the rover cannot fully see."""
 
 from __future__ import annotations
 
@@ -97,16 +76,7 @@ def simulate_traverse(
     max_steps: int | None = None,
     energy_budget_kwh: float | None = None,
 ) -> TraverseResult:
-    """Drive from ``start`` to ``goal`` under partial observability.
-
-    ``grid_template`` supplies the rover, the scale and the constraint
-    thresholds; its hazard field is replaced by the rover's *belief*, so nothing
-    inside the planner can reach the truth even by accident.
-
-    ``energy_budget_kwh`` defaults to the rover's battery capacity. Exceeding it
-    ends the traverse with :class:`FailureMode.LOW_BATTERY` rather than a
-    silently over-budget success.
-    """
+    """Drive from ``start`` to ``goal`` under partial observability."""
     rover = grid_template.rover
     budget = energy_budget_kwh if energy_budget_kwh is not None else rover.battery_capacity_kwh
     step_limit = (

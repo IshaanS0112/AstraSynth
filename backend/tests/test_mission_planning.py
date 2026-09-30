@@ -1,8 +1,4 @@
-"""Mission-level planning: communications, science selection, scheduling.
-
-These are the layers above route planning - the ones that decide *what* the
-rover should do rather than how it gets there.
-"""
+"""Mission-level planning: communications, science selection, scheduling."""
 
 from __future__ import annotations
 

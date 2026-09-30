@@ -1,10 +1,4 @@
-"""Mission execution under partial observability.
-
-* ``belief``      - what the rover believes, as a distribution, separate from truth
-* ``sensors``     - how belief is revised by observation
-* ``execution``   - driving a route while the belief changes underneath it
-* ``monte_carlo`` - the same mission a thousand times, with the noise resampled
-"""
+"""Mission execution under partial observability."""
 
 from app.services.simulation.belief import BeliefState
 from app.services.simulation.execution import MissionEvent, TraverseResult, simulate_traverse

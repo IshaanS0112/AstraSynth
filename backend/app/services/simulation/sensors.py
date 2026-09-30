@@ -1,28 +1,4 @@
-"""A deliberately simple rover sensor model.
-
-Scope, stated up front: this is **not** computer vision and does not pretend to
-be. It is the minimum model that makes the belief/reality distinction have
-consequences - a rover learns about the ground near it, imperfectly, and learns
-nothing about the ground beyond its horizon.
-
-Three properties, each of which changes planner behaviour in a way the test
-suite checks:
-
-* **range** - cells beyond ``range_m`` are not observed at all, so the rover
-  drives into surprises rather than around them;
-* **noise** - readings are the truth plus Gaussian noise, so a single look does
-  not collapse the belief to certainty and the Bayesian update in
-  :mod:`belief` has something to do;
-* **occlusion** - a cell is observable only if the straight line to it clears
-  the intervening terrain, so a rover cannot see over a ridge into the valley
-  behind it.
-
-Occlusion uses the same supercover walk as the Theta* line-of-sight check, with
-a straight-line height profile against the terrain: a cell is hidden when
-intervening ground rises above the line from sensor height to target. That is a
-geometric line-of-sight test, not a radiative-transfer model, and the difference
-matters mainly in that it is cheap and inspectable.
-"""
+"""A deliberately simple rover sensor model."""
 
 from __future__ import annotations
 
@@ -80,11 +56,7 @@ class RoverSensor:
         position: Cell,
         rng: np.random.Generator,
     ) -> dict[Cell, float]:
-        """Readings of the true hazard field at every visible in-range cell.
-
-        Values are clipped to [0, 1]: the sensor may be noisy but it cannot
-        report a hazard outside the scale the rest of the system is defined on.
-        """
+        """Readings of the true hazard field at every visible in-range cell."""
         observations: dict[Cell, float] = {}
         for cell in self.cells_in_range(grid, position):
             if not self.visible(grid, position, cell):

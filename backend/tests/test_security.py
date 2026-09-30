@@ -1,15 +1,4 @@
-"""The optional shared-secret layer.
-
-Needs no database: every assertion here is about what reaches a router, so the
-app under test carries the real middleware stack over a trivial one.
-
-What is worth asserting is mostly the *exemptions*, because each one is a hole
-deliberately left open and a hole left open by accident looks identical from
-inside the code. The probes have to answer without a credential or a container
-runtime kills a healthy process; a browser preflight has to pass or the
-dashboard reports a CORS error instead of a 401; and `/static` must *not* be
-exempt, which is the case a per-router dependency would have missed.
-"""
+"""The optional shared-secret layer."""
 
 from __future__ import annotations
 
@@ -143,12 +132,7 @@ class TestExemptions:
         assert response.headers.get("access-control-allow-origin") == "http://localhost:5173"
 
     def test_the_static_mount_is_protected(self, tmp_path):
-        """The case a per-router dependency would have missed.
-
-        /static serves uploaded terrain tiles and rendered hazard overlays. It is
-        a mounted app rather than a router, so a `Depends` cannot reach it - which
-        is the whole reason enforcement lives in middleware.
-        """
+        """The case a per-router dependency would have missed."""
         (tmp_path / "terrain.png").write_bytes(b"\x89PNG\r\n\x1a\n")
         client = TestClient(build_app(GOOD_KEY, static_dir=tmp_path))
 
@@ -180,14 +164,7 @@ class TestConfigurationIsChecked:
 
 
 class TestTheRealAppIsWiredThisWay:
-    """The tests above build their own stack; this one checks the shipped one.
-
-    Middleware order is the kind of thing a later edit reshuffles without
-    noticing, because nothing fails loudly - the API still answers, it just
-    answers without CORS headers on its 401s, or stops logging them. Starlette's
-    `add_middleware` inserts at the front, so `user_middleware[0]` is the
-    *outermost* layer and this list reads outside in.
-    """
+    """The tests above build their own stack; this one checks the shipped one."""
 
     def test_the_stack_is_context_then_cors_then_key(self):
         from app.main import app

@@ -1,10 +1,4 @@
-"""Experiments: studies with a config, a seed, and a reproducible result.
-
-Every endpoint here is **synchronous**, and the request bounds in
-``schemas/v3.py`` are sized so that it can be. A 500-trial Monte Carlo or a
-20,000-node constraint tree belongs behind a job queue; accepting one on a
-request thread would trade a clear 422 for a silent gateway timeout.
-"""
+"""Experiments: studies with a config, a seed, and a reproducible result."""
 
 from __future__ import annotations
 
@@ -46,11 +40,7 @@ def route_study(
     db: DbSession,
     settings: AppSettings,
 ):
-    """Sweep the objective weights; return the non-dominated routes.
-
-    A study rather than a plan: the result is the set of trade-offs, and which
-    one to fly is a mission decision the API deliberately does not make.
-    """
+    """Sweep the objective weights; return the non-dominated routes."""
     return _guard(
         lambda: autonomy.run_route_study(
             db=db,
@@ -70,11 +60,7 @@ def monte_carlo_study(
     db: DbSession,
     settings: AppSettings,
 ):
-    """Run the mission repeatedly with the noise resampled.
-
-    The seed is stored on the experiment, so the same row can be re-run and
-    compared rather than merely re-read.
-    """
+    """Run the mission repeatedly with the noise resampled."""
     perturbations = Perturbations(
         terrain_sigma=payload.terrain_sigma,
         obstacle_count=payload.unmapped_obstacles,
@@ -104,12 +90,7 @@ def fleet_plan(
     db: DbSession,
     settings: AppSettings,
 ):
-    """Deconflict a heterogeneous fleet with CBS.
-
-    A failure here is a 200 with ``status: FAILED``, not an HTTP error: "these
-    rovers cannot be deconflicted within this budget" is a mission finding worth
-    storing and looking at, not a broken request.
-    """
+    """Deconflict a heterogeneous fleet with CBS."""
     assignments = [
         {
             "label": item.label,

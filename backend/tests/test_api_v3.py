@@ -1,13 +1,4 @@
-"""API tests for the mission-autonomy endpoints.
-
-Same skip rule and same justification as ``test_api.py``: the models use JSONB
-and native UUID, so these run against real PostgreSQL or not at all.
-
-What they check is the contract, not the algorithms - the engines have their own
-suites. The things that can only go wrong at this layer are the ones tested
-here: the pixel/cell frame conversion, ordering rules, failures that should be a
-stored result rather than an HTTP error, and cross-mission isolation.
-"""
+"""API tests for the mission-autonomy endpoints."""
 
 from __future__ import annotations
 

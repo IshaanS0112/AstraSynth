@@ -1,39 +1,4 @@
-"""Which science targets to visit, in what order, under what budget.
-
-The problem
------------
-Once a mission has objectives rather than a destination, "plan a route" stops
-being the question. Six candidate outcrops, a battery that pays for four of
-them, instruments that only two rovers carry, and a communication window that
-has to be caught: what the mission needs is a *subset* and an *order*.
-
-That is the orienteering problem - a travelling salesman who does not have to
-visit everything and collects a prize for each stop, under a budget. It is
-NP-hard, and this module does not pretend to solve it exactly.
-
-What it actually does, in order
--------------------------------
-1. **Reachability** - A* from every target to every other, on the real hazard
-   grid with the real rover. Targets with no feasible route are dropped here,
-   with the reason recorded, not silently skipped.
-2. **Greedy insertion** - repeatedly add the unvisited target with the best
-   ``value / marginal cost`` ratio, provided the tour still fits the energy and
-   time budgets.
-3. **2-opt** - repeatedly reverse a sub-tour where doing so shortens the route.
-   Improves the *order*, never the *selection*, so it can never break a budget
-   that step 2 satisfied.
-
-Steps 2 and 3 are heuristics. On the mission sizes this handles (single-digit
-target counts) the optimal tour is usually recovered, but that is an observation
-about small instances, not a guarantee, and ``method`` on the result says so.
-
-Cost, not distance
-------------------
-Legs are ranked by planner *cost*, which already carries hazard and incline, so
-a target that is close in metres but across a scarp does not look cheap. Energy
-and time are then measured separately on the chosen legs, because those are the
-quantities the budgets are denominated in.
-"""
+"""Which science targets to visit, in what order, under what budget."""
 
 from __future__ import annotations
 
@@ -161,13 +126,7 @@ def plan_science_tour(
     instruments: frozenset[str] | None = None,
     return_to_start: bool = False,
 ) -> PlanningOutcome:
-    """Select and order science stops for one rover.
-
-    ``instruments`` is what this rover carries; a target requiring anything else
-    is dropped with ``instrument_not_carried``. That is what makes a fleet of
-    differently-equipped rovers mean something at the mission layer rather than
-    only at the traversability layer.
-    """
+    """Select and order science stops for one rover."""
     if not targets:
         raise ValueError("at least one science target is required")
     budget = energy_budget_kwh if energy_budget_kwh is not None else grid.rover.battery_capacity_kwh

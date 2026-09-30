@@ -1,14 +1,4 @@
-"""The background queue.
-
-Needs PostgreSQL, and not only for the reasons the other API tests do: the whole
-mechanism *is* ``FOR UPDATE SKIP LOCKED``. Testing it against anything else would
-be testing a different queue.
-
-What matters here is the behaviour under failure, because that is what a queue is
-for. A happy-path job running to completion is the easy half; the half that
-decides whether this is usable is what happens when two workers reach for the
-same row, when one dies holding it, and when a client changes its mind.
-"""
+"""The background queue."""
 
 from __future__ import annotations
 
@@ -96,12 +86,7 @@ def rover_id(app_client) -> str:
 
 @pytest.fixture(autouse=True)
 def clean_queue(session_factory):
-    """Start every test with an empty queue.
-
-    ``claim`` takes the oldest queued row, so a leftover job from a previous
-    test - or a previous *run*, since the database outlives the process - would
-    silently be the row under test. The isolation has to be explicit.
-    """
+    """Start every test with an empty queue."""
     from app.models import Job
 
     with session_factory() as session:
@@ -159,13 +144,7 @@ class TestClaiming:
         jobs.succeed(db, claimed, None)
 
     def test_two_workers_never_get_the_same_job(self, session_factory, db, mission_row):
-        """SKIP LOCKED, stated as a property rather than as a SQL fragment.
-
-        Two sessions claiming at the same moment must come away with different
-        rows - or with nothing. The failure this guards against is the one a
-        read-then-write implementation has: both workers take the same job and
-        it runs twice.
-        """
+        """SKIP LOCKED, stated as a property rather than as a SQL fragment."""
         from app.services import jobs
 
         queued = [
@@ -477,15 +456,7 @@ class TestApi:
 
 
 class TestConfiguration:
-    """The settings that govern the queue have to actually reach the worker.
-
-    Every field in this class was already present, already documented in
-    ``config.py``, and already inert: ``Worker.__init__`` defaulted its timings to
-    literals that happened to equal the settings defaults, so nothing looked
-    wrong and nothing responded to the environment either. These assert the wire,
-    not the value - a default that coincides with the configured value is exactly
-    what hid the defect, so each one sets something the default is not.
-    """
+    """The settings that govern the queue have to actually reach the worker."""
 
     def test_the_worker_takes_its_timings_from_settings(self):
         from app.config import Settings

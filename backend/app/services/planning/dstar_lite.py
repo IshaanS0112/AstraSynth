@@ -1,46 +1,4 @@
-"""D* Lite: incremental replanning when the belief map changes mid-traverse.
-
-The situation this exists for
------------------------------
-A rover plans from an orbital map. The orbital map is coarse. Two hundred metres
-along the route a hazard camera resolves a boulder field the orbital map showed
-as open ground. The route is now wrong, and the rover is standing in the middle
-of it.
-
-Replanning with A* from scratch works and throws away everything: the previous
-search proved facts about the parts of the map that did *not* change, and almost
-all of the map did not change. D* Lite (Koenig & Likhachev, 2002) keeps that
-work. It searches backwards from the goal, so g-values are costs *to* the goal
-and stay valid as the rover moves; when edge costs change it repairs only the
-part of the tree those edges could have affected.
-
-The two claims and how they are checked
----------------------------------------
-1. **It is correct** - the route it returns after a repair is the same route a
-   fresh A* would return on the updated map, at the same cost. ``test_dstar_lite``
-   asserts this on random terrain with random obstacle reveals, not on a
-   hand-picked case.
-2. **It is cheaper** - a repair expands fewer vertices than a from-scratch
-   search. ``vertices_expanded`` is recorded per repair so the claim is a
-   measurement.
-
-Without (1), (2) is worthless, which is why the equality test is the important
-one.
-
-Implementation notes
---------------------
-* Priority queue keys are ``[min(g, rhs) + h(s_start, s) + k_m, min(g, rhs)]``.
-  ``k_m`` accumulates the heuristic shift as the rover moves, which is what lets
-  the queue keep its ordering without being rebuilt on every step.
-* The queue uses lazy deletion - a stale entry is recognised on pop by comparing
-  against the authoritative key in ``_queue_keys`` - because ``heapq`` has no
-  decrease-key.
-* Edge costs here are **directed**: ``c(u, v)`` charges the hazard of ``v``, so
-  ``c(u, v) != c(v, u)``. Successors and predecessors are the same eight cells
-  geometrically but not the same edges, and the update rule below is written for
-  the directed case. Getting this wrong produces a planner that is right on
-  symmetric terrain and quietly wrong everywhere else.
-"""
+"""D* Lite: incremental replanning when the belief map changes mid-traverse."""
 
 from __future__ import annotations
 
@@ -53,11 +11,9 @@ from app.services.planning.grid import NEIGHBOUR_OFFSETS, Cell, PlanningGrid
 _INF = math.inf
 Key = tuple[float, float]
 
-# ``v`` is a predecessor of ``u`` exactly when ``v + offset_k == u`` for some k,
-# i.e. ``v == u + offset_opposite[k]``. Because NEIGHBOUR_OFFSETS contains every
-# offset together with its negation, the predecessor set of a cell is its
-# neighbour set - but the *edge* between them is directional, and this table is
-# what maps one direction to the other without recomputing geometry per lookup.
+# Predecessors of u are its neighbours, since NEIGHBOUR_OFFSETS holds every
+# offset with its negation - but the edge between them is directional, and this
+# table maps one direction to the other without redoing geometry per lookup.
 _OPPOSITE = tuple(NEIGHBOUR_OFFSETS.index((-dr, -dc)) for dr, dc in NEIGHBOUR_OFFSETS)
 
 
@@ -119,10 +75,8 @@ class DStarLite:
         self.grid = grid
         self.goal = goal
 
-        # Flat integer cells and list-backed value tables, for the same reason
-        # A* uses them: this search touches millions of g/rhs entries, and a
-        # dictionary keyed on freshly allocated tuples spends most of its time
-        # hashing rather than searching.
+        # Flat int cells and list-backed tables: a dict keyed on fresh tuples
+        # spends most of its time hashing, not searching.
         self._graph = grid.compiled()
         self._cols = self._graph.cols
         self._start = start[0] * self._cols + start[1]
@@ -234,8 +188,8 @@ class DStarLite:
                 for predecessor in self._predecessors(cell):
                     self._update_vertex(predecessor)
             else:
-                # Underconsistent: a path got *worse*. Invalidate and let the
-                # predecessors - and this vertex - find out where else to go.
+                # Underconsistent: a path got worse. Invalidate and let the
+                # predecessors, and this vertex, find another way.
                 self._g[cell] = _INF
                 self._update_vertex(cell)
                 for predecessor in self._predecessors(cell):
@@ -277,24 +231,14 @@ class DStarLite:
         return best_cell, best_value
 
     def next_step(self) -> Cell | None:
-        """The successor of ``start`` on the current best route, or ``None``.
-
-        ``None`` means the goal is unreachable from where the rover is standing
-        given what it currently believes.
-        """
+        """The successor of ``start`` on the current best route, or ``None``."""
         if self._start == self._goal:
             return None
         best_cell, best_value = self._best_successor(self._start)
         return divmod(best_cell, self._cols) if best_value < _INF else None
 
     def extract_path(self, max_steps: int | None = None) -> list[Cell]:
-        """The full route from ``start`` to ``goal`` under the current beliefs.
-
-        Walks greedily down the g-value field, which is the route the rover
-        would drive if nothing else changed. Returns ``[]`` when the goal is
-        unreachable. The step cap is a guard against a cycle from a numerically
-        degenerate field, not an expected condition.
-        """
+        """The full route from ``start`` to ``goal`` under the current beliefs."""
         if not self.reachable:
             return []
         limit = max_steps if max_steps is not None else self._graph.size
@@ -313,13 +257,7 @@ class DStarLite:
         return []
 
     def move_to(self, cell: Cell) -> None:
-        """Tell the planner the rover has driven to ``cell``.
-
-        ``k_m`` absorbs the change in the heuristic's reference point so that
-        keys already in the queue stay comparable with keys computed from here.
-        This is the whole trick that makes D* Lite incremental across motion
-        rather than only across map changes.
-        """
+        """Tell the planner the rover has driven to ``cell``."""
         index = cell[0] * self._cols + cell[1]
         if index == self._start:
             return
@@ -328,25 +266,18 @@ class DStarLite:
         self._last_start = index
         self._start = index
         # The heuristic is measured from the rover, so moving it re-bases the
-        # whole table. One vectorised pass beats a hypot per key computation.
+        # whole table; one vectorised pass beats a hypot per key.
         self._heuristic_from_start = self._graph.heuristics_to(index)
 
     def apply_updates(self, updates: dict[Cell, float]) -> RepairRecord | None:
-        """Write sensed hazard values into the grid and repair the search tree.
-
-        Returns ``None`` when nothing actually changed - re-sensing known ground
-        must not trigger a repair, or "incremental" would be a word rather than
-        a property.
-        """
+        """Write sensed hazard values into the grid and repair the search tree."""
         changed = self.grid.apply_hazard_update(updates)
         if not changed:
             return None
 
         for cell in changed:
-            # c(u, v) charges the hazard of v, so changing v's hazard changes
-            # every edge *into* v: its predecessors are what need re-evaluating.
-            # v itself is updated too, because whether v can be left is
-            # unaffected but its own consistency must still be restored.
+            # c(u, v) charges v's hazard, so changing it changes every edge INTO
+            # v: the predecessors need re-evaluating, and v itself for consistency.
             index = cell[0] * self._cols + cell[1]
             self._update_vertex(index)
             for predecessor in self._predecessors(index):

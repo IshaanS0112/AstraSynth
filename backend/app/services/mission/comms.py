@@ -1,26 +1,4 @@
-"""Where the rover can talk from, and when.
-
-A planetary rover does not have a continuous link. It has line of sight to a
-fixed relay for part of its traverse, and an orbiter overhead for a few minutes
-at a time. A route that is optimal on distance and energy but spends its whole
-length in a radio shadow is not a route a mission would fly, and a planner that
-cannot see that constraint will produce one every time.
-
-Two independent link mechanisms, deliberately kept separate because they fail
-differently:
-
-* **Ground relay** - a fixed station (a lander, a previously placed relay).
-  Availability is purely geometric: line of sight over the terrain, inside a
-  range limit. Position-dependent, time-independent.
-* **Orbiter pass** - a satellite overhead on a repeating schedule. Availability
-  is purely temporal. Time-dependent, position-independent (an orbiter high
-  above sees everything below the local horizon; modelling per-pass geometry is
-  future work and is not claimed here).
-
-A rover has a link when *either* is available. The route-level output is
-``blackout_fraction``: the share of the traverse with no link at all, which is
-the number that goes into the multi-objective cost.
-"""
+"""Where the rover can talk from, and when."""
 
 from __future__ import annotations
 
@@ -42,13 +20,7 @@ class RelayStation:
     max_range_m: float = 5000.0
 
     def visibility_mask(self, grid: PlanningGrid, rover_antenna_m: float = 1.5) -> np.ndarray:
-        """Boolean grid: cells with line of sight to this station, in range.
-
-        O(rows * cols * line length). At the 192-cell planning grid this is a
-        few hundred thousand supercover walks - fine to compute once per mission
-        and cache, not fine to call inside a search loop, which is why the
-        planner is handed the finished mask rather than this method.
-        """
+        """Boolean grid: cells with line of sight to this station, in range."""
         mask = np.zeros(grid.shape, dtype=bool)
         for row in range(grid.rows):
             for col in range(grid.cols):
@@ -71,13 +43,7 @@ class RelayStation:
 
 @dataclass(slots=True)
 class OrbiterPass:
-    """A repeating overhead window.
-
-    ``period_seconds`` between the start of one pass and the start of the next;
-    ``duration_seconds`` of usable link per pass. Mars relay orbiters give an
-    order of ten minutes of contact a few times a sol, which is the shape these
-    defaults describe - they are illustrative, not an ephemeris.
-    """
+    """A repeating overhead window."""
 
     name: str
     period_seconds: float = 6 * 3600.0
@@ -143,13 +109,7 @@ class CommunicationPlan:
     def evaluate_route(
         self, grid: PlanningGrid, cells: list[Cell], start_time_s: float = 0.0
     ) -> dict:
-        """Link statistics for a route, driven at the rover's own pace.
-
-        ``longest_blackout_seconds`` matters more than the fraction: a mission
-        rule is normally "never out of contact for more than N hours", and a
-        route can satisfy an 80%-coverage target while violating it inside one
-        long shadow.
-        """
+        """Link statistics for a route, driven at the rover's own pace."""
         if not cells:
             raise ValueError("cannot evaluate an empty route")
 

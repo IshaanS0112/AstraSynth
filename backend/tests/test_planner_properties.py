@@ -1,18 +1,4 @@
-"""Properties the planners must satisfy on *any* terrain, not just the fixtures.
-
-Example-based tests check the cases somebody thought of. The failures that
-matter in a search algorithm are the ones nobody thought of: a one-cell corridor,
-a grid where every diagonal clips a lethal corner, a start already walled in. So
-these are stated as invariants and Hypothesis goes looking for terrain that
-breaks them.
-
-The invariants chosen are *metamorphic* - they relate two runs to each other
-rather than asserting an expected output. That matters because the expected
-output of A* on random terrain is "whatever A* computes", which no test can
-independently know. What a test can know is that making the ground worse must
-never make the route cheaper, and that two planners over one cost model must
-agree on the optimum.
-"""
+"""Properties the planners must satisfy on *any* terrain, not just the fixtures."""
 
 from __future__ import annotations
 
@@ -42,12 +28,7 @@ SLOW = settings(
 
 @st.composite
 def terrain(draw, min_size: int = 6, max_size: int = 14):
-    """Random hazard and relief, plus the endpoints, as one drawn value.
-
-    Hazard reaches past the lethal threshold and relief past the slope limit on
-    purpose: a generator that only produces drivable ground would never exercise
-    the constraint layers, which is where the interesting failures live.
-    """
+    """Random hazard and relief, plus the endpoints, as one drawn value."""
     rows = draw(st.integers(min_value=min_size, max_value=max_size))
     cols = draw(st.integers(min_value=min_size, max_value=max_size))
     seed = draw(st.integers(min_value=0, max_value=2**31 - 1))
@@ -81,12 +62,7 @@ class TestOptimality:
     @given(terrain())
     @SLOW
     def test_astar_and_dijkstra_agree_on_the_optimum(self, drawn):
-        """The empirical admissibility check, over arbitrary terrain.
-
-        An inadmissible heuristic shows up here as A* finding a *cheaper* cost
-        than Dijkstra - cheaper because it stopped early on a route that is not
-        actually optimal.
-        """
+        """The empirical admissibility check, over arbitrary terrain."""
         hazard, elevation, start, goal = drawn
         if start == goal:
             return
@@ -226,12 +202,7 @@ class TestIncrementalEquivalence:
     @given(terrain(min_size=8, max_size=14), st.integers(0, 2**31 - 1))
     @SLOW
     def test_dstar_lite_always_matches_a_fresh_search(self, drawn, seed):
-        """The claim the whole incremental planner rests on, on arbitrary terrain.
-
-        After any sequence of belief updates, the route D* Lite holds must be the
-        one A* would compute on the updated map - at the same cost, not merely a
-        similar one.
-        """
+        """The claim the whole incremental planner rests on, on arbitrary terrain."""
         hazard, elevation, start, goal = drawn
         if start == goal:
             return

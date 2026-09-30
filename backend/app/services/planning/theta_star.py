@@ -1,39 +1,4 @@
-"""Theta*: any-angle path planning over the shared cost model.
-
-The problem it solves
----------------------
-A* on an 8-connected grid can only produce headings that are multiples of 45
-degrees. Asked to cross open ground at 20 degrees it returns a staircase: the
-right *length* to three decimal places, and a route no rover would drive,
-because every step of the staircase is a real turn that costs real time and real
-localisation error. The grid is an artefact of the discretisation, and A* has no
-way to see past it.
-
-Theta* is A* with one change: when relaxing a neighbour ``s'`` of ``s``, it first
-asks whether ``s'`` is visible from ``s``'s *parent*. If it is, ``s'`` is
-attached to that grandparent directly and the intermediate cell is skipped. Paths
-therefore consist of straight segments between corners rather than grid steps,
-and the corners land where the terrain actually requires a turn.
-
-What it costs
--------------
-**Theta\\* is not optimal, and this module does not claim it is.** Two reasons,
-both real here:
-
-1. Theta* itself is only an approximation of the true any-angle optimum even on
-   a uniform grid - it considers a shortcut only to the immediate parent, not to
-   every ancestor.
-2. Segment costs come from :meth:`PlanningGrid.segment`, a sampled line integral.
-   A sampled integral is not identical to the sum of the grid steps beneath it,
-   so a Theta* cost and an A* cost are not two measurements of the same
-   quantity and must not be compared as though they were.
-
-What *can* be compared, and what the test suite checks, are the two properties
-Theta* is actually for: Euclidean route length, and how many times the route
-changes heading. On open terrain it should beat A* on both. Where it should not
-be used is anywhere the guarantee matters more than the shape - which is why A*
-remains the default planner and the baseline every benchmark measures against.
-"""
+"""Theta*: any-angle path planning over the shared cost model."""
 
 from __future__ import annotations
 
@@ -62,11 +27,7 @@ class ThetaResult:
 
 
 def search(grid: PlanningGrid, start: Cell, goal: Cell) -> ThetaResult:
-    """Theta* from ``start`` to ``goal``.
-
-    Returns the corner sequence, not the cells in between: consecutive entries
-    are the endpoints of straight segments and are generally not adjacent.
-    """
+    """Theta* from ``start`` to ``goal``."""
     graph = grid.compiled()
     rows, cols = grid.shape
     g_score = np.full((rows, cols), np.inf, dtype=np.float64)

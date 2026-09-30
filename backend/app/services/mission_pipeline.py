@@ -1,18 +1,4 @@
-"""Orchestration between the HTTP layer and the analysis engines.
-
-Routers stay thin: they validate input, call one function here, and serialise
-the result. All ordering rules ("you cannot plan a path before the terrain has
-been analysed") live in this module.
-
-Persistence note
-----------------
-The hazard and elevation grids are the analysis stage's real output, but they
-are arrays, not rows. They are written to ``storage/<mission_id>/analysis.npz``
-and referenced from ``analysis_metadata``, so path planning reloads them rather
-than re-running the whole CV pipeline. Re-analysing a mission overwrites the
-file; the analysis is deterministic, so a stale read is not a correctness risk,
-only a wasted one.
-"""
+"""Orchestration between the HTTP layer and the analysis engines."""
 
 from __future__ import annotations
 
@@ -135,15 +121,7 @@ def load_planning_grids(analysis_row: TerrainAnalysisRow) -> tuple[np.ndarray, n
 def load_planning_arrays(
     analysis_row: TerrainAnalysisRow,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, float]:
-    """Hazard, elevation, hazard-uncertainty and the downsample scale.
-
-    ``uncertainty_grid`` was added after V1, so an ``analysis.npz`` written by
-    an older run will not contain it. Rather than failing on a mission that was
-    analysed before the column existed, a zero field is returned - which is
-    exactly the "no uncertainty modelled" behaviour V1 had, and makes
-    ``uncertainty_weight`` a no-op on that mission instead of an error. Re-running
-    the analysis produces the real field.
-    """
+    """Hazard, elevation, hazard-uncertainty and the downsample scale."""
     metadata = analysis_row.analysis_metadata or {}
     arrays_path = metadata.get("arrays_path")
     if not arrays_path or not Path(arrays_path).exists():
@@ -224,11 +202,7 @@ def waypoint_dict(waypoint: Waypoint) -> dict:
 
 
 def rehydrate_path(row: RoverPath) -> PlannedPath:
-    """Rebuild the planner dataclass from a stored row.
-
-    Risk assessment is pure and cheap, so it is recomputed from stored waypoints
-    rather than cached - one fewer thing that can go stale relative to the path.
-    """
+    """Rebuild the planner dataclass from a stored row."""
     waypoints = [
         Waypoint(
             segment_id=w["segment_id"],
@@ -268,12 +242,7 @@ def resolve_path(db: Session, mission: Mission, path_id: uuid.UUID | None) -> Ro
 def run_risk_assessment(
     db: Session, mission: Mission, path_row: RoverPath, settings: Settings
 ) -> MissionRiskReport:
-    """Compute the deterministic half of the report and persist it.
-
-    Deliberately stops before the LLM. The structured context is complete and
-    queryable at this point; generating the narrative is a separate, optional,
-    failure-tolerant step.
-    """
+    """Compute the deterministic half of the report and persist it."""
     analysis_row = mission.terrain_analysis
     if analysis_row is None:
         raise PipelineError("Terrain must be analysed before risk can be assessed.")

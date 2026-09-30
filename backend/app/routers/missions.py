@@ -25,12 +25,7 @@ def create_mission(
     terrain_source: str | None = Form(None),
     terrain_image: UploadFile = File(...),
 ) -> Mission:
-    """Create a mission from an uploaded terrain image.
-
-    The extension is checked against an allowlist and the file is written under
-    a generated UUID rather than its client-supplied name, so a hostile filename
-    cannot escape the storage directory.
-    """
+    """Create a mission from an uploaded terrain image."""
     suffix = FilePath(terrain_image.filename or "").suffix.lower()
     if suffix not in ALLOWED_SUFFIXES:
         raise HTTPException(

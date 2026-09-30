@@ -1,10 +1,4 @@
-"""A* correctness.
-
-The load-bearing claim in this project's resume line is "A* path planning with
-an energy-aware cost function". These tests are what make that claim checkable:
-optimality against a hand-computed value, admissibility against Dijkstra on the
-same grid, the hard slope constraint, and the energy accounting.
-"""
+"""A* correctness."""
 
 from __future__ import annotations
 
@@ -22,13 +16,7 @@ from app.services.path_planner import (
 
 
 def _rough_terrain() -> tuple[np.ndarray, np.ndarray]:
-    """40x40 random hazard over gentle relief.
-
-    Relief is capped at 0.6 m per cell over 2 m cells (about 17 degrees worst
-    case) so the slope limit never removes an edge: these tests are about A*
-    versus Dijkstra on an identical graph, and a blocked edge would change the
-    graph rather than the search.
-    """
+    """40x40 random hazard over gentle relief."""
     rng = np.random.default_rng(11)
     hazard = rng.random((40, 40)).astype(np.float32)
     elevation = (rng.random((40, 40)) * 0.6).astype(np.float32)
@@ -37,11 +25,7 @@ def _rough_terrain() -> tuple[np.ndarray, np.ndarray]:
 
 class TestOptimality:
     def test_flat_terrain_path_is_the_straight_diagonal(self, flat_grid, rover):
-        """On zero hazard and zero relief, the optimal route is the diagonal.
-
-        With 8-connectivity and a metric cost, a (0,0) -> (9,9) traverse should
-        take exactly 9 diagonal steps: any other route is strictly longer.
-        """
+        """On zero hazard and zero relief, the optimal route is the diagonal."""
         hazard, elevation = flat_grid
         path = plan_path(
             hazard, elevation, {"x": 0, "y": 0}, {"x": 9, "y": 9}, rover, meters_per_cell=1.0
@@ -56,12 +40,7 @@ class TestOptimality:
             assert waypoint.y == index
 
     def test_matches_dijkstra_cost_on_random_terrain(self, rover):
-        """A* must return the same optimal cost as Dijkstra.
-
-        This is the empirical test of admissibility: an inadmissible heuristic
-        produces a cheaper-looking but genuinely worse path, which would show up
-        here as a cost mismatch.
-        """
+        """A* must return the same optimal cost as Dijkstra."""
         hazard, elevation = _rough_terrain()
 
         astar = plan_path(
@@ -87,13 +66,7 @@ class TestOptimality:
         assert astar.metadata["nodes_expanded"] < dijkstra.metadata["nodes_expanded"]
 
     def test_cost_layer_alone_does_not_force_a_detour(self, rover):
-        """Documents the limit of the soft cost layer.
-
-        ``(1 + hazard)`` tops out at 2x, so a one-cell crossing of a maximally
-        hazardous band is still cheaper than a fifteen-cell detour around it.
-        This is not a bug in A* - it is why the lethal layer exists, and the
-        next test is the same scenario with that layer switched on.
-        """
+        """Documents the limit of the soft cost layer."""
         hazard = np.zeros((21, 21), dtype=np.float32)
         hazard[10, :18] = 0.95
         elevation = np.zeros((21, 21), dtype=np.float32)

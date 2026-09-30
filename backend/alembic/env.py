@@ -28,27 +28,15 @@ from app.db.session import Base
 
 config = context.config
 
-# Alembic's own logging config is for the *CLI*, and applying it in-process is
-# destructive: `fileConfig` defaults to disable_existing_loggers=True, and
-# alembic.ini sets the root logger to WARNING with a plain console handler. So
-# running a migration from inside the app replaced the JSON handler
-# `configure_logging` had installed and raised the root level above INFO - which
-# silently switched off every structured request log line for the rest of the
-# process's life. The API applies migrations on boot by default, so that was the
-# normal case, not an edge one.
-#
-# `configure_logger` is alembic's documented hook for this: the CLI leaves it
-# unset and gets its configured output, and a programmatic caller sets it False
-# to keep the logging it has already set up. disable_existing_loggers=False on
-# top, so even the CLI path only adds to what is there.
+# fileConfig is for the CLI. In-process it is destructive: it disables existing
+# loggers and alembic.ini sets root to WARNING, which used to switch off every
+# structured log line for the life of the process. `configure_logger` is
+# alembic's hook - the CLI leaves it unset, app/db/migrate.py sets it False.
 if config.config_file_name is not None and config.attributes.get("configure_logger", True):
     fileConfig(config.config_file_name, disable_existing_loggers=False)
 
-# Default to the application's database, but never override a URL the caller
-# supplied. Clobbering it would mean `alembic -x` and programmatic use could not
-# target a scratch database - and the migration test, which builds a throwaway
-# database precisely to check the migrations in isolation, would silently run
-# against the live one instead.
+# Default to the app's database but never override a caller's URL, or the
+# migration test's throwaway database would silently become the live one.
 if not config.get_main_option("sqlalchemy.url", None):
     config.set_main_option("sqlalchemy.url", get_settings().database_url)
 
@@ -77,8 +65,8 @@ def run_migrations_online() -> None:
         context.configure(
             connection=connection,
             target_metadata=target_metadata,
-            # Without compare_type a widened column silently produces an empty
-            # migration, and the drift test would pass while the schema diverged.
+            # Without these a widened column or changed default produces an
+            # empty migration and the drift test passes while the schema diverges.
             compare_type=True,
             compare_server_default=True,
         )

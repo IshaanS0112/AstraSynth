@@ -1,14 +1,10 @@
 /**
- * The 3-D planetary view.
+ * The 3-D planetary view: a plain class, no React.
  *
- * Deliberately a plain class with no React in it. The renderer owns a canvas, a
- * scene graph and an animation loop; React owns state and decides *what* should
- * be shown. Mixing the two means every mission-state change re-runs a render
- * tree that is really a mutable scene graph, and a terrain mesh gets rebuilt
- * because a telemetry number ticked.
- *
- * The interface is therefore imperative and coarse: hand it a terrain, a layer
- * name, some routes, some markers. Each setter rebuilds only what it owns.
+ * The renderer owns the canvas, scene graph and animation loop; React owns state
+ * and decides what to show. The interface is imperative and coarse - hand it a
+ * terrain, a layer name, routes, markers - and each setter rebuilds only what it
+ * owns, so a telemetry tick cannot rebuild a terrain mesh.
  */
 
 import * as THREE from "three";
@@ -53,9 +49,7 @@ function ramp(stops: [number, number, number][], t: number): [number, number, nu
   ];
 }
 
-// Restrained, engineering-console palette. Hazard and slope share a ramp
-// because they mean the same thing to an operator - "this is getting worse" -
-// and giving them different hues would imply a distinction that isn't there.
+// Hazard and slope share a ramp: they mean the same thing to an operator.
 const RAMPS: Record<TerrainLayerName, [number, number, number][]> = {
   elevation_m: [
     [0.13, 0.15, 0.19],
@@ -106,8 +100,7 @@ export class TerrainScene {
     this.renderer = new THREE.WebGLRenderer({
       canvas,
       antialias: true,
-      // A transparent buffer would let the page background show through the
-      // terrain where the mesh is thin; the scene paints its own ground.
+      // Opaque: the scene paints its own ground.
       alpha: false,
     });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
@@ -124,8 +117,8 @@ export class TerrainScene {
     this.controls.minDistance = WORLD_SPAN * 0.15;
     this.controls.maxDistance = WORLD_SPAN * 2.5;
 
-    // Two lights only. A single directional source makes north-facing slopes
-    // read as black, which on a hazard map is indistinguishable from safe.
+    // Two lights: one directional source makes north-facing slopes read as
+    // black, which on a hazard map is indistinguishable from safe.
     const key = new THREE.DirectionalLight(0xffffff, 1.5);
     key.position.set(-1, 2, 1.2);
     this.scene.add(key);
@@ -162,10 +155,8 @@ export class TerrainScene {
   setTerrain(grid: TerrainGrid, layer: TerrainLayerName = "hazard"): void {
     this.grid = grid;
     this.cellSize = WORLD_SPAN / Math.max(grid.rows, grid.cols);
-    // Relief is drawn to true scale against the horizontal: one metre of rise
-    // is the same length as one metre across. Exaggerating it would make a
-    // 6-degree plain look like a mountain range, and the whole point of the
-    // slope layer is that the viewer can trust what it sees.
+    // True scale: one metre of rise is one metre across, so the slope layer can
+    // be trusted. Exaggeration is a separate, labelled control.
     this.verticalScale = (this.cellSize / grid.meters_per_cell) * this.exaggeration;
 
     this.disposeMesh();
@@ -176,9 +167,8 @@ export class TerrainScene {
       grid.cols - 1,
       grid.rows - 1,
     );
-    // PlaneGeometry is built in XY with +Y up the screen; rotating it flat maps
-    // its local +Y onto world -Z, which is why row 0 ends up at -Z and matches
-    // cellToWorld above.
+    // PlaneGeometry is XY with +Y up; rotating it flat maps +Y onto world -Z,
+    // which is why row 0 lands at -Z and matches cellToWorld.
     geometry.rotateX(-Math.PI / 2);
 
     const position = geometry.attributes.position as THREE.BufferAttribute;
@@ -210,13 +200,9 @@ export class TerrainScene {
   }
 
   /**
-   * Vertical exaggeration, defaulting to 1 - true scale, one metre of rise the
-   * same length as one metre across.
-   *
-   * Offered as a control rather than baked in because the two uses conflict: a
-   * slope layer is only trustworthy at true scale, and a 40 m relief across a
-   * 1 km tile is nearly invisible at it. Making it a labelled, resettable knob
-   * keeps the honest default and still lets an operator see the landform.
+   * Vertical exaggeration, default 1 (true scale). A knob rather than a baked-in
+   * value: the slope layer is only trustworthy at 1, but 40 m of relief across a
+   * 1 km tile is nearly invisible there.
    */
   setExaggeration(value: number): void {
     this.exaggeration = value;
@@ -241,10 +227,8 @@ export class TerrainScene {
       for (let col = 0; col < grid.cols; col += 1) {
         const index = row * grid.cols + col;
         let rgb = ramp(stops, (values[row][col] - low) / span);
-        // Lethal ground is drawn as itself on every layer, not only the hazard
-        // one. An operator looking at the slope map still needs to see where
-        // the rover cannot go, and inferring it from a different tab is how a
-        // route gets approved across a crater rim.
+        // Lethal ground is drawn on every layer, not just hazard: inferring it
+        // from another tab is how a route gets approved across a crater rim.
         if (showLethal && grid.layers.lethal[row][col]) {
           rgb = [0.55, 0.1, 0.12];
         }
@@ -319,10 +303,7 @@ export class TerrainScene {
 
   /**
    * Canvas coordinates -> the image pixel under the cursor, or null off-terrain.
-   *
-   * Returned in image pixels rather than cells because that is the frame every
-   * API endpoint speaks, and converting at the edge means no caller has to know
-   * the grid resolution the viewer happens to be showing.
+   * Image pixels, not cells, because that is the frame every API endpoint speaks.
    */
   pick(clientX: number, clientY: number): GridPoint | null {
     if (!this.mesh || !this.grid) return null;
@@ -344,9 +325,8 @@ export class TerrainScene {
   }
 
   resetCamera(view: CameraView): void {
-    // Framed so the terrain fills the viewport. A 45-degree field of view over a
-    // 100-unit plane needs the camera at roughly 0.75 spans to have the far edge
-    // just inside frame; anything further wastes the panel the view exists for.
+    // 0.75 spans: a 45-degree FOV over a 100-unit plane puts the far edge just
+    // inside frame. Further back wastes the panel.
     const distance = WORLD_SPAN * (view === "top" ? 0.82 : 0.9);
     if (view === "top") {
       this.camera.position.set(0, distance * 1.55, 0.001);
@@ -395,9 +375,8 @@ export class TerrainScene {
   }
 
   private clearGroup(group: THREE.Group): void {
-    // WebGL resources are not garbage collected with the JS object holding
-    // them. Replaying a traverse rebuilds the route group on every frame of the
-    // scrub, so leaking a geometry per rebuild is a leak per frame.
+    // WebGL resources are not GC'd with their JS object, and a traverse replay
+    // rebuilds this group every frame of the scrub.
     for (const child of [...group.children]) {
       group.remove(child);
       const withGeometry = child as THREE.Mesh | THREE.Line;

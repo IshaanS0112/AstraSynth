@@ -1,16 +1,4 @@
-"""Structured planning and mission outcomes.
-
-The V1 planner raised ``PathNotFoundError`` with a sentence describing what went
-wrong. That is better than returning ``False``, but a sentence is not something
-a caller can branch on, and the UI cannot colour a warning amber or red based on
-prose.
-
-So every failure here carries three things: a machine-readable
-:class:`FailureMode`, a human sentence, and a ``diagnostics`` dictionary with the
-measurements behind the verdict. "No safe path" and "battery cannot pay for the
-safe path that exists" are different operational situations that need different
-responses, and the type system now says so.
-"""
+"""Structured planning and mission outcomes."""
 
 from __future__ import annotations
 
@@ -85,15 +73,7 @@ def diagnose_search_failure(
     start: tuple[int, int],
     goal: tuple[int, int],
 ) -> PlanningOutcome:
-    """Turn an exhausted search into the most specific failure it supports.
-
-    Which constraint did the walling-off is the question an operator actually
-    asks, and the two counters answer it: a corridor closed almost entirely by
-    slope rejections is a rover-capability problem (send the Heavy class), one
-    closed by hazard rejections is a terrain problem (the objective needs to
-    move). The dominant counter picks the mode; a tie or an empty count falls
-    back to the generic NO_SAFE_PATH rather than guessing.
-    """
+    """Turn an exhausted search into the most specific failure it supports."""
     by_slope = blocked.get("moves_blocked_by_slope_limit", 0)
     by_hazard = blocked.get("moves_blocked_by_lethal_hazard", 0)
     total = by_slope + by_hazard

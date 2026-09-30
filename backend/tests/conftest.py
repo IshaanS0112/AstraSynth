@@ -1,11 +1,4 @@
-"""Shared fixtures.
-
-Every test in this suite runs against the pure analysis functions, with no
-database and no network. That is deliberate: the claims this project makes
-(hazard is computed, A* is optimal, feasibility is arithmetic, the report
-degrades without an API key) are all claims about those functions, so they
-should be verifiable by anyone who clones the repo and runs ``pytest``.
-"""
+"""Shared fixtures."""
 
 from __future__ import annotations
 
@@ -44,11 +37,7 @@ def flat_grid() -> tuple[np.ndarray, np.ndarray]:
 
 @pytest.fixture
 def walled_grid() -> tuple[np.ndarray, np.ndarray]:
-    """Flat terrain bisected by a cliff with a single gap at the bottom.
-
-    The cliff is far steeper than any rover's limit, so a correct planner must
-    detour through the gap rather than crossing it.
-    """
+    """Flat terrain bisected by a cliff with a single gap at the bottom."""
     hazard = np.zeros((20, 20), dtype=np.float32)
     elevation = np.zeros((20, 20), dtype=np.float32)
     elevation[:18, 10] = 500.0  # 500 m step - impassable by any rover

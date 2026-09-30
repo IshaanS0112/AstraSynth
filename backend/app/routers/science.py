@@ -21,13 +21,7 @@ router = APIRouter(prefix="/missions", tags=["science"])
 def create_science_target(
     payload: ScienceTargetCreate, mission: CurrentMission, db: DbSession
 ) -> ScienceTarget:
-    """Add a target in original-image pixel coordinates.
-
-    Deliberately not validated against the terrain here. A target on
-    untraversable ground is a legitimate thing to record - the tour planner
-    reports it as ``target_on_lethal_terrain`` rather than refusing it, which
-    is the answer an operator needs.
-    """
+    """Add a target in original-image pixel coordinates."""
     row = ScienceTarget(mission_id=mission.id, **payload.model_dump())
     db.add(row)
     db.commit()

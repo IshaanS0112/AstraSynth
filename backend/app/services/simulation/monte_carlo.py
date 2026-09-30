@@ -1,39 +1,4 @@
-"""The same mission a thousand times, with the noise resampled each run.
-
-Why a single deterministic route is not an answer
--------------------------------------------------
-V1 planned one route and reported one energy figure. That figure is the energy
-the route costs *if the terrain is exactly what the orbital map said and the
-rover consumes exactly its nominal rate*. Neither is true, and the interesting
-question - will this mission finish - has no answer in a single run.
-
-So the mission is run repeatedly with the uncertain quantities resampled:
-
-* **terrain** - the truth is perturbed away from the orbital prior, so the rover
-  meets ground the map did not show;
-* **sensing** - observation noise is redrawn, so the rover learns a slightly
-  different version of the world each run;
-* **energy** - the per-metre draw is scaled by a lognormal factor, standing in
-  for wheel slip, temperature and drivetrain variation.
-
-The output is a distribution: a success probability, and percentiles rather than
-means. P90 energy is the number a mission planner actually sizes a battery
-against; the mean is the number that gets missions stranded.
-
-Reproducibility
----------------
-Everything is driven from one integer seed through ``numpy.random.SeedSequence``,
-which spawns independent child streams per trial. Two consequences that the test
-suite checks: the same seed gives bit-identical results, and trial *k* is
-independent of how many trials were run - so a 100-trial study and the first 100
-trials of a 1000-trial study agree exactly, and a run can be extended without
-invalidating what came before.
-
-Lognormal, not normal, for the energy factor: a multiplicative perturbation
-cannot go negative, and consumption error is naturally multiplicative. A normal
-draw at a wide enough sigma silently produces rovers that generate power by
-driving.
-"""
+"""The same mission a thousand times, with the noise resampled each run."""
 
 from __future__ import annotations
 
@@ -179,13 +144,7 @@ def _init_worker(context: dict) -> None:
 
 
 def _execute_trial(context: dict, index: int, stream: np.random.SeedSequence) -> TrialResult:
-    """One realisation of the mission. Pure given ``(context, index, stream)``.
-
-    That purity is the load-bearing property: the seed sequence is spawned per
-    trial in the parent, so which worker runs trial *k* - or whether any worker
-    does - cannot change its result. ``test_monte_carlo`` asserts that serial
-    and parallel runs agree exactly.
-    """
+    """One realisation of the mission. Pure given ``(context, index, stream)``."""
     settings: Perturbations = context["perturbations"]
     orbital: np.ndarray = context["orbital"]
     elevation: np.ndarray = context["elevation"]
@@ -239,15 +198,7 @@ def _worker_trial(job: tuple[int, np.random.SeedSequence]) -> TrialResult:
 
 
 def _pool_context():
-    """A start method that is safe to use from inside a web server.
-
-    ``fork`` is fast but copies a process that may hold locks in other threads -
-    and this runs on FastAPI's request threadpool, which is exactly that
-    situation. ``forkserver`` forks from a clean single-threaded helper instead,
-    so it is safe without paying ``spawn``'s full interpreter restart on every
-    worker. Where forkserver is unavailable (macOS ships it, Windows does not)
-    ``spawn`` is the correct fallback; ``fork`` deliberately is not.
-    """
+    """A start method that is safe to use from inside a web server."""
     available = multiprocessing.get_all_start_methods()
     for method in ("forkserver", "spawn"):
         if method in available:
@@ -279,25 +230,7 @@ def run(
     workers: int | None = None,
     progress: Callable[[int, int], bool] | None = None,
 ) -> MonteCarloReport:
-    """Run the mission ``trials`` times and aggregate.
-
-    Trials are independent by construction, so they are distributed across
-    processes when there are enough of them to be worth the pool. ``workers=1``
-    forces the serial path; ``None`` picks a sensible number from the trial count
-    and the core count. **The result does not depend on which is used** - the
-    per-trial seed streams are spawned in the parent before any work is handed
-    out, so parallelism changes the wall time and nothing else.
-
-    ``progress`` is called after each completed trial with
-    ``(completed, total)``; returning ``False`` stops the study and returns the
-    trials finished so far. That is how a background job reports progress and
-    how cancelling one actually stops it - the alternative, killing the worker,
-    would leave a half-written experiment and no way to say which half.
-
-    ``grid_template`` is never mutated: every trial builds its own grid from the
-    template's rover and thresholds, so a trial that drives the rover into a
-    boulder field cannot contaminate the next one.
-    """
+    """Run the mission ``trials`` times and aggregate."""
     if trials <= 0:
         raise ValueError("trials must be positive")
     settings = perturbations or Perturbations()

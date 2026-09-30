@@ -1,16 +1,4 @@
-"""Persistence for the mission-autonomy layer.
-
-All three tables are **new**, not alterations of existing ones, so the V1
-``create_all`` bootstrap still covers the schema. A migration tool becomes
-necessary the moment an existing column changes shape; adding tables beside the
-old ones is still append-only, and pulling in Alembic before it is needed would
-be ceremony rather than engineering. The note in docs/architecture.md stands:
-the first column change is what buys Alembic.
-
-``Experiment`` carries provenance - the git revision, the seed, and the exact
-parameter set - because a stochastic result that cannot be reproduced is an
-anecdote. Everything needed to re-run a study is in its row.
-"""
+"""Persistence for the mission-autonomy layer."""
 
 import uuid
 from datetime import datetime
@@ -27,13 +15,7 @@ if TYPE_CHECKING:  # avoids a circular import at runtime
 
 
 class ScienceTarget(Base):
-    """A place worth stopping at, stored per mission.
-
-    Coordinates are in **original image pixels**, the same frame the UI clicks
-    in and the same frame ``RoverPath`` waypoints use. Planning-grid cells are
-    derived on demand from the mission's downsample scale, never stored - the
-    scale is a property of an analysis run and would go stale here.
-    """
+    """A place worth stopping at, stored per mission."""
 
     __tablename__ = "science_targets"
 
@@ -54,13 +36,7 @@ class ScienceTarget(Base):
 
 
 class TraverseRun(Base):
-    """One simulated drive under partial observability.
-
-    The executed path, the initial plan and the full event log are stored as
-    JSONB rather than normalised into rows. They are read as a whole, written
-    once and never queried field-by-field, so a table per waypoint would buy
-    nothing and cost a join per replay.
-    """
+    """One simulated drive under partial observability."""
 
     __tablename__ = "traverse_runs"
 
@@ -97,14 +73,7 @@ class TraverseRun(Base):
 
 
 class Experiment(Base):
-    """A study with a config, a seed, and a reproducible result.
-
-    One table with a ``kind`` discriminator rather than one per study type. The
-    four kinds - Monte Carlo, a Pareto sweep, a fleet deconfliction, a science
-    tour - differ entirely in their payloads and not at all in their lifecycle:
-    each is a parameter set in, a JSON result out, run once and read many times.
-    Four near-identical tables would be four places to add provenance to.
-    """
+    """A study with a config, a seed, and a reproducible result."""
 
     __tablename__ = "experiments"
     __table_args__ = (Index("ix_experiments_mission_kind", "mission_id", "kind"),)

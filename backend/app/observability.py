@@ -1,28 +1,4 @@
-"""Structured logging, request correlation, and metrics.
-
-Three things, all in service of one question: when a study is slow or a job is
-stuck, can you find out why from outside the process?
-
-**Structured logs.** Human-readable lines are fine until you need to ask "which
-requests for mission X took over a second", and then they are a regular
-expression. Every log line here is one JSON object, so that question is a filter
-rather than a parse.
-
-**Request correlation.** A traverse simulation touches the API, the pipeline,
-four planners and the database. Without an id threaded through, the log lines
-from one slow request are interleaved with everyone else's and cannot be
-separated afterwards. The id is generated per request, attached to every log
-record emitted while handling it via a ``ContextVar``, and returned in the
-``X-Request-ID`` header so a client can quote it in a bug report.
-
-**Metrics.** Deliberately hand-rolled rather than pulling in a client library:
-the whole surface needed here is counters and a latency histogram, the
-Prometheus text format is a dozen lines to emit, and a research project should
-not take an operational dependency to count four things. The histogram uses
-explicit bucket bounds and cumulative counts, which is what the format requires -
-getting that wrong is the usual reason hand-rolled metrics are a bad idea, so it
-is tested.
-"""
+"""Structured logging, request correlation, and metrics."""
 
 from __future__ import annotations
 
@@ -40,9 +16,8 @@ from starlette.routing import Match
 
 request_id_var: ContextVar[str | None] = ContextVar("astra_request_id", default=None)
 
-# Seconds. Chosen around what this system actually does: sub-millisecond reads,
-# tens of milliseconds for a plan, seconds for a study. Uniform buckets would
-# put every interesting value in one bin.
+# Seconds, spaced around what this system does: sub-ms reads, tens of ms for a
+# plan, seconds for a study. Uniform buckets would collapse into one bin.
 LATENCY_BUCKETS = (0.005, 0.025, 0.1, 0.5, 1.0, 2.5, 10.0, 30.0)
 
 
@@ -61,8 +36,7 @@ class JsonFormatter(logging.Formatter):
             payload["request_id"] = request_id
         if record.exc_info:
             payload["exception"] = self.formatException(record.exc_info)
-        # Anything passed as `extra=` rides along, so a call site can attach the
-        # mission id or a planner's node count without a bespoke formatter.
+        # Anything passed as extra={"astra_...": v} rides along, prefix stripped.
         for key, value in getattr(record, "__dict__", {}).items():
             if key.startswith("astra_"):
                 payload[key[6:]] = value
@@ -88,12 +62,7 @@ def configure_logging(level: str = "INFO", json_logs: bool = True) -> None:
 
 
 class Metrics:
-    """Counters and latency histograms, in Prometheus text format.
-
-    Thread-safe because the API serves sync endpoints on a threadpool and the
-    workers run in threads beside it, so every counter here has concurrent
-    writers.
-    """
+    """Counters and latency histograms, in Prometheus text format."""
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
@@ -128,13 +97,7 @@ class Metrics:
         return _Timer(self, name, labels)
 
     def render(self) -> str:
-        """Prometheus text exposition format.
-
-        Histogram buckets are **cumulative** and must include ``+Inf`` equal to
-        the observation count - that is the part of this format people get wrong,
-        and a scraper reading non-cumulative buckets reports nonsense rather than
-        an error.
-        """
+        """Prometheus text exposition format."""
         lines: list[str] = []
         with self._lock:
             counters = dict(self._counters)
@@ -202,13 +165,7 @@ METRICS = Metrics()
 
 
 class RequestContextMiddleware(BaseHTTPMiddleware):
-    """Correlation id, access log, and request metrics.
-
-    The route *template* is used as the metric label, not the path: labelling by
-    path would mint a new time series per mission id and turn the metrics
-    endpoint into an unbounded memory leak. That is the standard way to blow up
-    a Prometheus deployment.
-    """
+    """Correlation id, access log, and request metrics."""
 
     async def dispatch(self, request: Request, call_next):
         incoming = request.headers.get("x-request-id")
@@ -217,11 +174,8 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
         started = time.perf_counter()
         logger = logging.getLogger("astrasynth.http")
 
-        # The context variable is reset in one place, after *everything* that
-        # logs. It used to be reset in a `finally` around `call_next`, which put
-        # the reset before the summary line below - so the one line carrying the
-        # route, status and duration was the only line in the request with no
-        # correlation id on it.
+        # Reset in one place, after everything that logs - including the summary
+        # line below, which is the line most worth correlating.
         try:
             try:
                 response = await call_next(request)
@@ -262,20 +216,7 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
 
 
 def _route_template(request: Request) -> str:
-    """The matched route's path template, for use as a metric label.
-
-    ``scope["route"]`` is set by the router, so it is present for anything the
-    router handled. It is *absent* for a response produced by an inner middleware
-    that short-circuited - an authentication rejection, most obviously - and
-    reporting those as ``unmatched`` was actively misleading: it labelled a 401
-    on a real endpoint identically to a 404 on a URL that does not exist, and
-    lost which endpoint was being called in the one case where an operator most
-    wants to know.
-
-    So when the router did not run, the request is matched against the route
-    table here. The result is still a template, so label cardinality stays bound
-    by the number of routes; the walk only happens on this fallback path.
-    """
+    """The matched route's path template, for use as a metric label."""
     route = request.scope.get("route")
     path = getattr(route, "path", None)
     if path:

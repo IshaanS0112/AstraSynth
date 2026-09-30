@@ -1,27 +1,4 @@
-"""Durable background work.
-
-Why a table and not a queue server
------------------------------------
-This is a research platform, not a fleet of services. Adding Redis or RabbitMQ
-would add an operational dependency, a second place for state to live, and a
-second thing to get wrong in a deployment - to buy throughput this workload does
-not need. A Monte Carlo study is measured in seconds and arrives a few at a time.
-
-PostgreSQL already holds every other durable fact here, and
-``SELECT ... FOR UPDATE SKIP LOCKED`` is a correct multi-consumer queue: each
-worker locks a different row and none of them block. The pattern is
-well-understood, survives a restart because the rows are durable, and is exactly
-as transactional as the results the jobs write.
-
-The lease
----------
-A worker that dies mid-job would otherwise leave its row ``RUNNING`` forever. So
-a claim is a **lease**: the worker stamps ``heartbeat_at`` as it works, and a job
-whose heartbeat has gone stale is returned to the queue by the next worker that
-looks. That makes delivery *at-least-once* rather than exactly-once, which is
-only safe because these jobs are deterministic in their seed - re-running one
-produces the same result rather than a second, different one.
-"""
+"""Durable background work."""
 
 import uuid
 from datetime import datetime

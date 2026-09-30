@@ -1,10 +1,4 @@
-"""Belief, observation, and the gap between them and reality.
-
-The property these tests exist to protect is that a planner cannot reach the
-truth. Everything else here - Bayesian arithmetic, occlusion geometry, the
-uncertainty-averse planning surface - is in service of that separation being
-real rather than nominal.
-"""
+"""Belief, observation, and the gap between them and reality."""
 
 from __future__ import annotations
 

@@ -1,8 +1,4 @@
-"""SQLAlchemy persistence models.
-
-Domain enums live in ``app.enums``, not here, so the analysis services can
-import them without pulling SQLAlchemy into the computation layer.
-"""
+"""SQLAlchemy persistence models."""
 
 from app.models.jobs import Job
 from app.models.mission import Mission, TerrainAnalysis

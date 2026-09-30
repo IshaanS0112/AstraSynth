@@ -1,11 +1,4 @@
-"""Conflict-Based Search over a heterogeneous fleet.
-
-A multi-agent solver that verifies its own output proves nothing, so every test
-here checks the returned routes with ``find_conflicts`` - the same function the
-solver uses to *find* conflicts, but run independently over the final answer. A
-solution that still contains a collision fails regardless of what the solver
-reported.
-"""
+"""Conflict-Based Search over a heterogeneous fleet."""
 
 from __future__ import annotations
 

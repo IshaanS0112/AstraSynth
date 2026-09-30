@@ -1,15 +1,4 @@
-"""The mission as a timeline of activities rather than a line on a map.
-
-A route says where. A schedule says when, and it is the schedule that exposes
-the constraints a route hides: that the rover arrives at a target twenty minutes
-after the communication window closed, that the third leg does not fit in the
-remaining power, that two science stops push the traverse past the end of the
-sol.
-
-Activities are contiguous and non-overlapping by construction - each one starts
-where the last ended - so the timeline is a partition of mission time, and
-anything unaccounted for is a bug rather than a gap.
-"""
+"""The mission as a timeline of activities rather than a line on a map."""
 
 from __future__ import annotations
 

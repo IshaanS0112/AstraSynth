@@ -34,11 +34,8 @@ from app.worker import WorkerPool
 logger = logging.getLogger("astrasynth")
 
 # Three reference rovers spanning the feasibility space for a ~1.3 km traverse:
-# the Scout runs out of battery, the Survey class completes with reserve, and
-# the Heavy class finishes inside its margin. Energy-per-metre figures are the
-# right order of magnitude for solar planetary rovers (MER-class rovers drove
-# on the order of 100 m per sol on roughly 0.3 kWh), but they are illustrative
-# planning defaults, not manufacturer specifications.
+# Scout runs out of battery, Survey completes with reserve, Heavy finishes inside
+# its margin. Illustrative planning defaults, not manufacturer specifications.
 SEED_ROVERS = [
     {
         "name": "Scout-Class (light)",
@@ -79,10 +76,8 @@ async def lifespan(app_instance: FastAPI):
     prepare_schema(settings.database_url, settings.auto_migrate)
     seed_rover_configs()
 
-    # Workers live in the API process by default. The queue is a table, so this
-    # is one consumer of it rather than a special case - set WORKER_THREADS=0
-    # and run `python -m app.worker` to move them out without changing anything
-    # else.
+    # The queue is a table, so an in-process worker is just one consumer of it.
+    # WORKER_THREADS=0 plus `python -m app.worker` moves them out.
     pool = WorkerPool(settings.worker_threads, settings)
     pool.start()
     app_instance.state.worker_pool = pool
@@ -94,8 +89,7 @@ async def lifespan(app_instance: FastAPI):
 
 settings = get_settings()
 configure_logging(settings.log_level, settings.log_json)
-# Checked here rather than on the first request: a key too short to be worth
-# having should stop a deployment, not surface as a surprise mid-traffic.
+# At startup, not on first request: a bad key should stop a deployment.
 validate_api_key(settings.api_key)
 
 app = FastAPI(
@@ -110,23 +104,17 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# Middleware order, and why it is written bottom-up.
-#
-# Starlette's `add_middleware` *inserts at the front*, so the last one added is
-# the outermost. The stack this builds, outside in:
+# `add_middleware` inserts at the front, so the LAST added is the outermost.
+# Reading outside in, this builds:
 #
 #   RequestContextMiddleware   correlation id, log line, metrics
 #     CORSMiddleware           response headers, preflight
 #       ApiKeyMiddleware       401 when a shared secret is configured
 #         routers
 #
-# Each position is load-bearing. Request context is outermost so that every
-# response is logged and counted, including a 401 and a preflight - a rejection
-# nobody can see is how an authentication problem turns into "the dashboard is
-# broken". CORS sits outside the key check so that a 401 comes back *with* CORS
-# headers: without that a browser reports it as a CORS failure and hides the
-# status that would have explained it. The key check is innermost of the three
-# because it is the only one that should ever stop a request reaching a router.
+# Context outermost so 401s and preflights are still logged and counted; CORS
+# outside the key check so a 401 carries CORS headers instead of surfacing in a
+# browser as an unexplained CORS failure.
 app.add_middleware(ApiKeyMiddleware, api_key=settings.api_key)
 
 app.add_middleware(
@@ -161,12 +149,7 @@ for module in (
 
 @app.get("/health", tags=["meta"])
 def health() -> dict[str, str]:
-    """Liveness only. Deliberately does not touch the database.
-
-    A liveness probe that fails when the database is down gets the API killed and
-    restarted during a database outage, which helps nobody. Readiness is the
-    check that should fail then, and it is separate for exactly that reason.
-    """
+    """Liveness only. Deliberately does not touch the database."""
     return {"status": "ok"}
 
 
@@ -195,12 +178,7 @@ def ready() -> dict[str, object]:
 
 @app.get("/metrics", tags=["meta"], response_class=PlainTextResponse)
 def metrics() -> str:
-    """Prometheus text exposition.
-
-    Queue depth is refreshed on scrape rather than written on every state change:
-    it is a property of a table, and deriving it at read time cannot drift from
-    the table the way an incrementally maintained counter can.
-    """
+    """Prometheus text exposition."""
     from app.db.session import SessionLocal
     from app.services import jobs as queue
 

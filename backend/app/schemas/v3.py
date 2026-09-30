@@ -1,9 +1,4 @@
-"""Request and response models for the mission-autonomy endpoints.
-
-Bounds are on the schema rather than in the handlers. A Monte Carlo study with
-a million trials or a sensor with a negative range is a bad request, not a
-server error, and pydantic answers it with a 422 before any engine is touched.
-"""
+"""Request and response models for the mission-autonomy endpoints."""
 
 from __future__ import annotations
 
@@ -171,12 +166,7 @@ class ScienceTourRequest(BaseModel):
 
 
 class MonteCarloJobRequest(MonteCarloRequest):
-    """A Monte Carlo study submitted to the queue rather than run inline.
-
-    The trial cap is two orders of magnitude higher than the synchronous one for
-    a simple reason: nothing is waiting on an HTTP connection, so the limit is
-    what the machine can finish rather than what a proxy will hold open.
-    """
+    """A Monte Carlo study submitted to the queue rather than run inline."""
 
     trials: int = Field(default=200, ge=1, le=5000)
     workers: int | None = Field(default=None, ge=1, le=64)

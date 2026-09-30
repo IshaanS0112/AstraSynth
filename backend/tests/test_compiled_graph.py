@@ -1,15 +1,4 @@
-"""The compiled graph must be the cost model, not an approximation of it.
-
-``CompiledGraph`` is a materialised view of ``PlanningGrid.evaluate_edge``. Every
-planner searches the view; nothing searches the model any more. A divergence
-between them would therefore not raise, not fail a planner test in any obvious
-way, and not show up in a benchmark - it would silently change which routes are
-legal and what they cost.
-
-So the equivalence is asserted directly, edge by edge, over terrain chosen to
-exercise every rejection path: lethal cells, cliffs, corner-cutting diagonals,
-and grid boundaries.
-"""
+"""The compiled graph must be the cost model, not an approximation of it."""
 
 from __future__ import annotations
 

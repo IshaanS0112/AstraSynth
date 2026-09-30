@@ -1,9 +1,4 @@
-"""Risk tiering and feasibility.
-
-Feasibility is the one verdict in this system with no interpretation in it -
-it is battery arithmetic. These tests pin the boundaries exactly, including the
-off-by-one at the margin threshold.
-"""
+"""Risk tiering and feasibility."""
 
 from __future__ import annotations
 

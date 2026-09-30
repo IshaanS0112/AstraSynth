@@ -1,18 +1,4 @@
-"""Turning a sequence of cells into a reportable path.
-
-Every planner in this package produces a list of grid cells. Everything
-downstream - the risk engine, the report generator, the API, the UI - consumes
-``PlannedPath``. This module is the single conversion between the two, so a
-route from Theta* is measured with exactly the same ruler as a route from A*.
-
-Two builders, because two kinds of path exist here:
-
-* :func:`build_stepped_path` for 8-connected routes (A*, D* Lite, CBS), where
-  consecutive cells are adjacent and each step is one grid move;
-* :func:`build_anyangle_path` for Theta*, where consecutive waypoints are
-  straight-line segments of arbitrary length and the per-segment figures come
-  from integrating along the line.
-"""
+"""Turning a sequence of cells into a reportable path."""
 
 from __future__ import annotations
 
@@ -105,15 +91,7 @@ def build_anyangle_path(
     metadata: dict,
     total_cost: float | None = None,
 ) -> PlannedPath:
-    """Measure a route whose waypoints are the corners of straight segments.
-
-    ``hazard_score`` on a waypoint is the *mean* hazard along the segment that
-    arrives at it, not the hazard of the corner cell. The risk engine averages
-    waypoint hazards over the route, and a Theta* route has far fewer waypoints
-    than the ground it covers - reporting only the corners would let a segment
-    that ploughs through a hazardous field read as safe because its endpoints
-    happen to be clean.
-    """
+    """Measure a route whose waypoints are the corners of straight segments."""
     if not cells:
         raise ValueError("cannot build a path from an empty cell list")
 
@@ -155,12 +133,7 @@ def build_anyangle_path(
 
 
 def heading_changes(cells: list[Cell]) -> int:
-    """How many times the route changes direction.
-
-    The measurable form of "a Theta* route looks like something a rover would
-    actually drive": an 8-connected route approximating a straight diagonal
-    zig-zags, and this counts the zigs.
-    """
+    """How many times the route changes direction."""
     if len(cells) < 3:
         return 0
     changes = 0

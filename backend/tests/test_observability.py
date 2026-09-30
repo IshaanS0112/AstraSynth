@@ -1,11 +1,4 @@
-"""Metrics and structured logging.
-
-Hand-rolled metrics are usually a mistake, and the reason is always the
-histogram: Prometheus buckets are *cumulative* and must carry a ``+Inf`` equal
-to the observation count. A scraper fed non-cumulative buckets does not error -
-it reports numbers that are quietly wrong. So that invariant is tested directly
-rather than eyeballed in a sample of output.
-"""
+"""Metrics and structured logging."""
 
 from __future__ import annotations
 
@@ -222,13 +215,7 @@ class TestEndpoints:
 
 
 class TestCorrelationReachesTheSummaryLine:
-    """The line carrying route, status and duration must carry the id too.
-
-    The reset used to sit in a `finally` around `call_next`, which put it *before*
-    the summary line - so the single most useful line in a request was the only
-    one without a correlation id on it, and joining a slow request to what it did
-    was impossible. Nothing failed; the field was simply absent.
-    """
+    """The line carrying route, status and duration must carry the id too."""
 
     def _captured(self, app, path: str, **kwargs):
         import io
@@ -297,13 +284,7 @@ class TestCorrelationReachesTheSummaryLine:
 
 
 class TestRouteLabelForShortCircuitedResponses:
-    """A 401 on a real endpoint must not be labelled the same as a 404.
-
-    `scope["route"]` is only set once the router runs, so a response produced by
-    an inner middleware had no route - and reporting it as `unmatched` lost which
-    endpoint was called in exactly the case an operator cares about, while
-    colliding with the label for URLs that genuinely do not exist.
-    """
+    """A 401 on a real endpoint must not be labelled the same as a 404."""
 
     def _app(self, reject: bool):
         from fastapi import FastAPI
