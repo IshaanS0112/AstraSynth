@@ -14,7 +14,7 @@ idempotency key first.
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import func, select, text, update
 from sqlalchemy.orm import Session
@@ -25,6 +25,18 @@ from app.models import Job, Mission
 # How long a claim survives without a heartbeat before another worker may take
 # it: long enough that a slow trial is not mistaken for a crash.
 DEFAULT_LEASE_SECONDS = 90.0
+
+
+def utcnow() -> datetime:
+    """Naive UTC, to match the naive ``DateTime`` columns these values go into.
+
+    Not ``utcnow()``: deprecated from 3.12, and this suite turns a
+    DeprecationWarning into an error, so on 3.12+ every lease write raised.
+    Returns exactly what ``utcnow()`` returned - making the columns timezone-aware
+    would be the better model, but that is a migration and a wire-format change,
+    not a fix for this.
+    """
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 def enqueue(db: Session, mission: Mission, kind: str, payload: dict, max_attempts: int = 2) -> Job:
@@ -79,7 +91,7 @@ def heartbeat(
     db: Session, job_id: uuid.UUID, progress: float | None = None, detail: str | None = None
 ) -> bool:
     """Renew the lease and report progress. ``False`` means stop."""
-    values: dict = {"heartbeat_at": datetime.utcnow()}
+    values: dict = {"heartbeat_at": utcnow()}
     if progress is not None:
         values["progress"] = max(0.0, min(1.0, progress))
     if detail is not None:
@@ -97,7 +109,7 @@ def succeed(db: Session, job: Job, experiment_id: uuid.UUID | None) -> Job:
     job.status = JobStatus.SUCCEEDED
     job.experiment_id = experiment_id
     job.progress = 1.0
-    job.finished_at = datetime.utcnow()
+    job.finished_at = utcnow()
     job.error = None
     db.commit()
     db.refresh(job)
@@ -114,7 +126,7 @@ def fail(db: Session, job: Job, error: str) -> Job:
         job.progress = 0.0
     else:
         job.status = JobStatus.FAILED
-        job.finished_at = datetime.utcnow()
+        job.finished_at = utcnow()
     db.commit()
     db.refresh(job)
     return job
@@ -122,7 +134,7 @@ def fail(db: Session, job: Job, error: str) -> Job:
 
 def finish_cancelled(db: Session, job: Job) -> Job:
     job.status = JobStatus.CANCELLED
-    job.finished_at = datetime.utcnow()
+    job.finished_at = utcnow()
     db.commit()
     db.refresh(job)
     return job
@@ -134,7 +146,7 @@ def request_cancel(db: Session, job: Job) -> bool:
         return False
     job.status = JobStatus.CANCELLED if job.status == JobStatus.QUEUED else JobStatus.CANCELLING
     if job.status == JobStatus.CANCELLED:
-        job.finished_at = datetime.utcnow()
+        job.finished_at = utcnow()
     db.commit()
     db.refresh(job)
     return True
@@ -142,7 +154,7 @@ def request_cancel(db: Session, job: Job) -> bool:
 
 def reclaim_stale(db: Session, lease_seconds: float = DEFAULT_LEASE_SECONDS) -> int:
     """Return jobs whose worker stopped heartbeating, and bury the hopeless ones."""
-    cutoff = datetime.utcnow() - timedelta(seconds=lease_seconds)
+    cutoff = utcnow() - timedelta(seconds=lease_seconds)
     active = (JobStatus.RUNNING.value, JobStatus.CANCELLING.value)
 
     exhausted = db.execute(

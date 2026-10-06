@@ -7,7 +7,7 @@ import sys
 import threading
 import time
 import uuid
-from datetime import datetime, timedelta
+from datetime import timedelta
 from pathlib import Path
 
 import pytest
@@ -206,7 +206,7 @@ class TestLease:
 
         jobs.enqueue(db, mission_row, "route_study", {"marker": "stale"})
         job = jobs.claim(db, "worker-that-dies")
-        job.heartbeat_at = datetime.utcnow() - timedelta(seconds=600)
+        job.heartbeat_at = jobs.utcnow() - timedelta(seconds=600)
         db.commit()
 
         assert jobs.reclaim_stale(db, lease_seconds=60) >= 1
@@ -221,7 +221,7 @@ class TestLease:
 
         jobs.enqueue(db, mission_row, "route_study", {"marker": "doomed"}, max_attempts=1)
         job = jobs.claim(db, "worker-doomed")
-        job.heartbeat_at = datetime.utcnow() - timedelta(seconds=600)
+        job.heartbeat_at = jobs.utcnow() - timedelta(seconds=600)
         db.commit()
 
         jobs.reclaim_stale(db, lease_seconds=60)

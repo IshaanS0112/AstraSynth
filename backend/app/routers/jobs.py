@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
 
 from fastapi import APIRouter, HTTPException, Query, status
 from sqlalchemy import select
@@ -110,6 +109,6 @@ def queue_stats(db: DbSession, settings: AppSettings) -> QueueStats:
         by_status=queue.queue_depth(db),
         in_process_workers=settings.worker_threads,
         oldest_queued_seconds=(
-            round((datetime.utcnow() - oldest).total_seconds(), 1) if oldest else None
+            round((queue.utcnow() - oldest).total_seconds(), 1) if oldest else None
         ),
     )
