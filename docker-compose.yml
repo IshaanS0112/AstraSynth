@@ -24,6 +24,12 @@ services:
       DATABASE_URL: postgresql+psycopg2://astra:astra@db:5432/astrasynth
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       CORS_ORIGINS: http://localhost:5173,http://localhost:3000
+      # Empty by default, which leaves the API open - correct for a local demo.
+      # Setting it closes every endpoint including /static, and the dashboard
+      # does not send a key by itself: nginx.conf has to inject it, or the
+      # frontend will get 401s that look like the backend is down. See
+      # docs/operations.md#authentication.
+      API_KEY: ${API_KEY:-}
     ports:
       - "8000:8000"
     volumes:

@@ -1,15 +1,4 @@
-"""Report generation: the "AI narrates, it does not compute" boundary.
-
-Three things are being defended here:
-
-1. Without an API key the report still contains every number - only the prose
-   is missing. That is the fallback path, and it is the default in CI.
-2. A model that cites a segment ID which is not in the structured context has
-   that citation discarded rather than surfaced.
-3. Malformed model output degrades to the fallback instead of raising.
-
-No network call is made by any test in this file.
-"""
+"""Report generation: the "AI narrates, it does not compute" boundary."""
 
 from __future__ import annotations
 

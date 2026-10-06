@@ -1,47 +1,5 @@
 #!/usr/bin/env python3
-"""Turn a real USGS Mars DEM into an AstraSynth-ready terrain tile.
-
-Dataset
--------
-Mars MGS MOLA - MEX HRSC Blended DEM Global 200m v2
-USGS Astrogeology Science Center, published 2018-01-31.
-
-  Catalogue page:
-  https://astrogeology.usgs.gov/search/map/mars_mgs_mola_mex_hrsc_blended_dem_global_200m
-
-  Citation (required by the dataset's access constraints):
-  Fergason, R. L., Hare, T. M., & Laura, J. (2018). HRSC and MOLA Blended
-  Digital Elevation Model at 200m v2. Astrogeology PDS Annex, U.S. Geological
-  Survey.
-
-  Grid: 106694 x 53347, 16-bit, 200 m/pixel, simple cylindrical,
-  planetocentric latitude, positive-east longitude, -180..180 domain.
-
-Why this script does not download the DEM for you
--------------------------------------------------
-The global product is ~11 GB. Vendoring it, or silently pulling it on first
-run, is not a reasonable thing for a repository to do. Download it once from
-the catalogue page above, then point this script at the file: it crops a
-region, rescales the 16-bit elevations to the 8-bit range the pipeline expects,
-and writes both the tile and a sidecar JSON recording the true elevation range
-so ``elevation_range_m`` is set from the data rather than guessed.
-
-Usage
------
-    # Crop a 512x512 tile (about 102 km square at 200 m/px) centred on
-    # Gale Crater, where Curiosity landed (-5.4 N, 137.8 E)
-    python scripts/prepare_usgs_terrain.py \
-        --source ~/Downloads/Mars_HRSC_MOLA_BlendDEM_Global_200mp_v2.tif \
-        --lat -5.4 --lon 137.8 --size 512
-
-    # Or crop by raw pixel offset if you already know where you are
-    python scripts/prepare_usgs_terrain.py --source <tif> --px 62000 --py 26000
-
-Reading an 11 GB GeoTIFF needs a windowed reader. ``rasterio`` is used if
-present (``pip install rasterio``); otherwise the script falls back to GDAL,
-and if neither is installed it explains what to install rather than dying with
-an ImportError.
-"""
+"""Turn a real USGS Mars DEM into an AstraSynth-ready terrain tile."""
 
 from __future__ import annotations
 
@@ -106,13 +64,7 @@ def read_window(source: Path, px: int, py: int, size: int) -> np.ndarray:
 
 
 def to_uint8(elevation: np.ndarray) -> tuple[np.ndarray, dict]:
-    """Rescale real elevations to 0-255, recording the true range.
-
-    The pipeline reads intensity as a linear proxy for elevation, so the
-    ``elevation_range_m`` it is configured with must be the actual relief of
-    this tile - otherwise every slope angle downstream is wrong by a constant
-    factor. That number is written to the sidecar JSON.
-    """
+    """Rescale real elevations to 0-255, recording the true range."""
     values = elevation.astype(np.float64)
     # MOLA/HRSC no-data is a large negative sentinel; exclude it from the range.
     valid = values[values > -100000]

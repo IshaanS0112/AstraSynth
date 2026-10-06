@@ -11,12 +11,7 @@ router = APIRouter(prefix="/missions", tags=["reports"])
 
 @router.post("/{mission_id}/generate-report", response_model=RiskReportOut)
 def generate_report(mission: CurrentMission, db: DbSession, settings: AppSettings):
-    """Narrate the stored structured context.
-
-    Never returns 5xx for an LLM problem: if the model call fails, times out, or
-    returns malformed JSON, the templated fallback is persisted instead and the
-    response carries ``narrative_source = "template_fallback"``.
-    """
+    """Narrate the stored structured context."""
     if not mission.reports:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,

@@ -105,16 +105,23 @@ export default function MissionDetail() {
             {analysis?.terrain_classification ?? "unclassified"}
           </p>
         </div>
-        <div className="flex items-center gap-1.5">
-          {STAGES.map((stage, index) => (
-            <div
-              key={stage}
-              title={stage}
-              className={`h-1.5 w-10 rounded-full ${
-                index <= stageIndex ? "bg-accent" : "bg-edge"
-              }`}
-            />
-          ))}
+        <div className="flex items-center gap-4">
+          <div className="flex items-center gap-1.5">
+            {STAGES.map((stage, index) => (
+              <div
+                key={stage}
+                title={stage}
+                className={`h-1.5 w-10 rounded-full ${
+                  index <= stageIndex ? "bg-accent" : "bg-edge"
+                }`}
+              />
+            ))}
+          </div>
+          {analysis && (
+            <Link to={`/missions/${mission.id}/control`} className="btn-primary text-xs">
+              Open mission control
+            </Link>
+          )}
         </div>
       </div>
 

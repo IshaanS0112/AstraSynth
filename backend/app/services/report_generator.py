@@ -1,23 +1,4 @@
-"""Mission report generation: structured context -> constrained LLM narrative.
-
-The ordering here is the whole point of the module.
-
-1. ``build_structured_context`` assembles every number the report will contain
-   from work the deterministic engines already did. Nothing in it is inferred
-   by a language model.
-2. ``generate_narrative`` hands that context to the model with a JSON-only
-   contract and an explicit instruction not to introduce facts.
-3. ``_validate_narrative`` throws away any cited segment ID that is not present
-   in the context. A hallucinated citation is dropped rather than surfaced.
-4. If the call fails, times out, returns unparseable output, or no API key is
-   configured, ``_fallback_narrative`` produces the same report from a template.
-   The numbers are identical; only the prose is missing.
-
-So the answer to "does your AI compute the risk?" is no - it renders it. Every
-figure in a generated report exists in ``structured_context``, which is stored
-alongside the narrative in the database and returned by the API, so the claim
-is checkable rather than asserted.
-"""
+"""Mission report generation: structured context -> constrained LLM narrative."""
 
 from __future__ import annotations
 
@@ -71,12 +52,7 @@ def build_structured_context(
     rover_name: str,
     risk: RiskAssessment,
 ) -> dict[str, Any]:
-    """Freeze every computed signal into the payload the LLM will narrate.
-
-    ``terrain_metadata`` is the ``analysis_metadata`` blob persisted by the
-    terrain stage, so the context is rebuilt from what was actually stored
-    rather than from a second, possibly divergent, in-memory analysis.
-    """
+    """Freeze every computed signal into the payload the LLM will narrate."""
     hazard_basis = terrain_metadata["hazard_calculation_basis"]
 
     return {

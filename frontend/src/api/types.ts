@@ -137,3 +137,135 @@ export interface RiskReport {
   narrative_source: string | null;
   generated_at: string;
 }
+
+// --- V3: mission autonomy ---------------------------------------------------
+
+export interface TerrainGrid {
+  rows: number;
+  cols: number;
+  /** Image pixels per rendered cell. Every waypoint the API returns is in pixels. */
+  pixel_scale: number;
+  meters_per_cell: number;
+  elevation_range_m: number;
+  lethal_hazard_threshold: number;
+  layers: {
+    elevation_m: number[][];
+    hazard: number[][];
+    uncertainty: number[][];
+    slope_deg: number[][];
+    lethal: number[][];
+  };
+  ranges: Record<string, [number, number]>;
+}
+
+export type TerrainLayerName = "elevation_m" | "hazard" | "uncertainty" | "slope_deg";
+
+export interface ScienceTarget {
+  id: string;
+  mission_id: string;
+  label: string;
+  x: number;
+  y: number;
+  value: number;
+  priority: "low" | "medium" | "high";
+  observation_seconds: number;
+  required_instrument: string | null;
+  created_at: string;
+}
+
+/**
+ * A point in original-image pixel coordinates.
+ *
+ * Named separately from the V1 `Waypoint`, which is a planner output carrying
+ * hazard, slope and cumulative energy. Declaring both as `Waypoint` in one
+ * module does not collide - TypeScript merges same-named interfaces - it
+ * silently produces a type requiring every field of both.
+ */
+export interface GridPoint {
+  x: number;
+  y: number;
+}
+
+export interface MissionEvent {
+  t_seconds: number;
+  category: "navigation" | "planner" | "energy" | "risk" | "system";
+  kind: string;
+  detail: Record<string, unknown>;
+}
+
+export interface TraverseRun {
+  id: string;
+  mission_id: string;
+  rover_config_id: string;
+  status: "SUCCESS" | "FAILED";
+  failure_mode: string | null;
+  reason: string | null;
+  start_point: GridPoint;
+  goal_point: GridPoint;
+  parameters: Record<string, any>;
+  distance_m: number;
+  energy_kwh: number;
+  elapsed_seconds: number;
+  replans: number;
+  reroutes: number;
+  repair_expansions: number;
+  initial_plan: GridPoint[];
+  executed_path: GridPoint[];
+  events: MissionEvent[];
+  belief_summary: Record<string, number | null>;
+  created_at: string;
+}
+
+export interface TraverseRunSummary {
+  id: string;
+  status: "SUCCESS" | "FAILED";
+  failure_mode: string | null;
+  distance_m: number;
+  energy_kwh: number;
+  elapsed_seconds: number;
+  replans: number;
+  reroutes: number;
+  repair_expansions: number;
+  created_at: string;
+}
+
+export interface RouteCandidate {
+  label: string;
+  search_weights: { hazard: number; energy: number };
+  objectives: {
+    distance_m: number;
+    energy_kwh: number;
+    mean_hazard: number;
+    max_hazard: number;
+  };
+  nodes_expanded: number;
+  heading_changes: number;
+  waypoint_count: number;
+  waypoints: GridPoint[];
+}
+
+export interface Experiment {
+  id: string;
+  mission_id: string;
+  kind: "route_study" | "monte_carlo" | "fleet_plan" | "science_tour";
+  status: "SUCCESS" | "FAILED";
+  failure_mode: string | null;
+  reason: string | null;
+  parameters: Record<string, any>;
+  seed: number | null;
+  code_revision: string | null;
+  result: Record<string, any>;
+  runtime_seconds: number;
+  created_at: string;
+}
+
+export interface ExperimentSummary {
+  id: string;
+  kind: Experiment["kind"];
+  status: "SUCCESS" | "FAILED";
+  failure_mode: string | null;
+  seed: number | null;
+  code_revision: string | null;
+  runtime_seconds: number;
+  created_at: string;
+}

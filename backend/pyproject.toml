@@ -14,6 +14,12 @@ select = [
     "UP",   # pyupgrade: modern syntax for the target version
     "SIM",  # simplifications
     "RUF",  # ruff-specific rules
+    # Naive-datetime misuse. Earns its place: `datetime.utcnow()` is deprecated
+    # from 3.12, this suite turns a DeprecationWarning into an error, and the
+    # lint job runs on a version where nothing warns at runtime - so the queue's
+    # lease writes passed locally and failed CI on 3.13. A lint rule catches it
+    # on every version.
+    "DTZ",
 ]
 ignore = [
     "E501",    # line length is enforced by the formatter, not the linter

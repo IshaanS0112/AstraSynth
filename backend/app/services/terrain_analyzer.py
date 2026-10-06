@@ -1,20 +1,4 @@
-"""Terrain analysis pipeline (OpenCV).
-
-The input is a single-channel terrain image interpreted as a coarse digital
-elevation model: intensity 0-255 maps linearly onto ``[0, elevation_range_m]``
-metres. That mapping plus ``meters_per_pixel`` is what lets pixel gradients be
-converted into real slope angles rather than unitless "steepness" numbers.
-
-Three products come out of this module, all as float arrays the same shape as
-the input image:
-
-* ``slope_deg``  - per-pixel terrain slope in degrees (Sobel).
-* ``obstacle_mask`` + contour list - discrete obstacle regions (Canny + contours).
-* ``roughness``  - normalised local intensity standard deviation.
-
-None of this is decorative. The hazard mapper, the A* cost function and the
-risk engine all consume these arrays directly.
-"""
+"""Terrain analysis pipeline (OpenCV)."""
 
 from __future__ import annotations
 
@@ -85,15 +69,7 @@ def load_terrain_image(path: str | Path) -> np.ndarray:
 def compute_slope(
     gray: np.ndarray, meters_per_pixel: float, elevation_range_m: float
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Sobel slope estimation.
-
-    Returns ``(slope_deg, gradient_magnitude)`` where gradient magnitude is the
-    dimensionless rise-over-run, i.e. ``tan(slope)``.
-
-    The ``/ 8`` divisor is the normalisation constant for the 3x3 Sobel kernel;
-    without it the "slope" is off by a constant factor and the degrees are
-    meaningless.
-    """
+    """Sobel slope estimation."""
     if meters_per_pixel <= 0:
         raise ValueError("meters_per_pixel must be positive")
 
@@ -109,16 +85,7 @@ def compute_slope(
 def adaptive_canny_thresholds(
     blurred_u8: np.ndarray, percentile: float, low_ratio: float
 ) -> tuple[float, float]:
-    """Derive Canny thresholds from this image's own gradient distribution.
-
-    Fixed thresholds do not survive contact with real terrain: a smooth
-    low-relief DEM has gradient magnitudes in the single digits and a fixed
-    (60, 160) pair detects literally nothing, while a high-contrast rocky tile
-    saturates and detects everything. Taking the high threshold at a percentile
-    of the observed gradient magnitude makes the detector scale-invariant with
-    respect to image contrast - the percentile fixes roughly *what fraction* of
-    the image is treated as edge, which is the property actually wanted.
-    """
+    """Derive Canny thresholds from this image's own gradient distribution."""
     gx = cv2.Sobel(blurred_u8, cv2.CV_32F, 1, 0, ksize=3)
     gy = cv2.Sobel(blurred_u8, cv2.CV_32F, 0, 1, ksize=3)
     magnitude = np.sqrt(gx**2 + gy**2)
@@ -134,14 +101,7 @@ def detect_obstacles(
     min_area_px: int,
     meters_per_pixel: float,
 ) -> tuple[list[Obstacle], np.ndarray, dict]:
-    """Canny edge detection -> contour extraction -> obstacle regions.
-
-    A morphological close sits between the two steps: raw Canny output is a set
-    of thin, frequently broken edge fragments, and ``findContours`` on that
-    yields hundreds of slivers rather than the handful of coherent regions a
-    planner cares about. ``L2gradient=True`` so Canny's internal magnitude
-    matches the one the thresholds were derived from.
-    """
+    """Canny edge detection -> contour extraction -> obstacle regions."""
     blurred = cv2.GaussianBlur(gray.astype(np.uint8), (5, 5), 0)
     low, high = adaptive_canny_thresholds(blurred, canny_percentile, canny_low_ratio)
     edges = cv2.Canny(blurred, low, high, L2gradient=True)
@@ -185,11 +145,7 @@ def detect_obstacles(
 
 
 def compute_roughness(gray: np.ndarray, window: int) -> np.ndarray:
-    """Normalised local intensity standard deviation in an NxN window.
-
-    ``E[x^2] - E[x]^2`` via two box filters is O(1) per pixel regardless of
-    window size, which matters because this runs over every pixel.
-    """
+    """Normalised local intensity standard deviation in an NxN window."""
     if window % 2 == 0:
         window += 1  # box filter needs an odd, centred window
     normalised = gray / 255.0
@@ -203,11 +159,7 @@ def compute_roughness(gray: np.ndarray, window: int) -> np.ndarray:
 def distance_to_nearest_obstacle_m(
     obstacle_mask: np.ndarray, meters_per_pixel: float
 ) -> np.ndarray:
-    """Euclidean distance transform, in metres, from every pixel to an obstacle.
-
-    If nothing was detected the distance is undefined; a large finite value is
-    returned so the proximity penalty cleanly collapses to ~0.
-    """
+    """Euclidean distance transform, in metres, from every pixel to an obstacle."""
     if not obstacle_mask.any():
         return np.full(obstacle_mask.shape, 1e6, dtype=np.float32)
     free_space = np.where(obstacle_mask > 0, 0, 255).astype(np.uint8)
@@ -222,18 +174,7 @@ def classify_terrain(
     obstacle_mask: np.ndarray,
     settings: Settings,
 ) -> tuple[TerrainClass, dict]:
-    """Rule-based terrain classification.
-
-    Deliberately not a neural network. See docs/architecture.md - with no
-    labelled planetary terrain set to train on, an explainable threshold rule
-    that can be inspected and defended beats an under-trained classifier whose
-    outputs cannot be justified.
-
-    The discriminating feature for a crater field is obstacle *area*, not
-    obstacle *count*: a rock-strewn highland produces several times more
-    contours than a crater field but each is tiny, so counting them ranks the
-    two backwards. Craters are few and large.
-    """
+    """Rule-based terrain classification."""
     height, width = slope_deg.shape
     megapixels = (height * width) / 1e6
     obstacle_density = len(obstacles) / megapixels if megapixels > 0 else 0.0
@@ -351,11 +292,7 @@ def render_slope_map(slope_deg: np.ndarray, output_path: str | Path) -> str:
 def slope_between(
     elevation_m: np.ndarray, a: tuple[int, int], b: tuple[int, int], meters_per_pixel: float
 ) -> float:
-    """Signed slope in degrees travelling from cell ``a`` to cell ``b``.
-
-    Positive is uphill. Used by the planner's energy model and by the
-    max-traversable-slope constraint.
-    """
+    """Signed slope in degrees travelling from cell ``a`` to cell ``b``."""
     ay, ax = a
     by, bx = b
     run_m = math.hypot(bx - ax, by - ay) * meters_per_pixel

@@ -1,24 +1,4 @@
-"""Mission risk assessment.
-
-Two independent judgements, deliberately kept separate:
-
-1. **Risk tier** - a normalised 0-1 blend of path hazard exposure and battery
-   draw, bucketed into LOW / MEDIUM / HIGH. Soft, comparative.
-2. **Feasibility** - a hard check of total energy against battery capacity.
-   Binary engineering constraint, no interpretation involved.
-
-A path can be HIGH risk and still FEASIBLE (short but nasty terrain), or LOW
-risk and INFEASIBLE (gentle but far beyond battery range). Collapsing the two
-into one score would hide exactly the case a mission planner most needs to see.
-
-Note on the hazard term
------------------------
-The original design summed hazard scores along the path. That sum grows with
-path length, so a long safe traverse scores worse than a short lethal one and
-nothing maps onto the 0-1 tier thresholds. The length-normalised **mean**
-hazard is used instead, with the peak reported separately so a single extreme
-segment is not averaged away.
-"""
+"""Mission risk assessment."""
 
 from __future__ import annotations
 
@@ -65,12 +45,7 @@ def tier_for_score(score: float, low: float, medium: float) -> RiskTier:
 
 
 def top_hazard_segments(path: PlannedPath, limit: int = 5) -> list[dict]:
-    """The ``limit`` highest-hazard waypoints, worst first.
-
-    These segment IDs are the only ones the report generator is permitted to
-    cite, which is what stops the narrative referencing a segment that does not
-    exist.
-    """
+    """The ``limit`` highest-hazard waypoints, worst first."""
     ranked = sorted(path.waypoints, key=lambda w: w.hazard_score, reverse=True)[:limit]
     return [
         {

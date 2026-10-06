@@ -1,10 +1,4 @@
-"""Terrain analysis and hazard scoring.
-
-The claim under test is that the CV stage computes real quantities: slope in
-degrees that matches trigonometry on a known ramp, obstacle detection that
-adapts to image contrast, and a hazard score that is bounded and traceable to
-its weights.
-"""
+"""Terrain analysis and hazard scoring."""
 
 from __future__ import annotations
 
@@ -39,12 +33,7 @@ class TestSlope:
         assert np.allclose(gradient, 0.0)
 
     def test_known_ramp_gives_the_trigonometric_answer(self):
-        """A ramp rising 1 m per 1 m of ground must read as 45 degrees.
-
-        This is the test that catches a wrong Sobel normalisation constant: an
-        unnormalised 3x3 Sobel is off by a factor of 8, and without a case with
-        a known answer that error is invisible.
-        """
+        """A ramp rising 1 m per 1 m of ground must read as 45 degrees."""
         # 255 grey levels across 255 columns, over 255 m of elevation range,
         # at 1 m/px => exactly 1 m rise per 1 m run.
         ramp = np.tile(np.arange(256, dtype=np.float32), (32, 1))
@@ -95,12 +84,7 @@ class TestRoughness:
 
 class TestObstacleDetection:
     def test_thresholds_scale_with_image_contrast(self):
-        """The adaptive-threshold fix, tested directly.
-
-        A low-contrast and a high-contrast version of the same scene must not
-        get the same absolute thresholds - that was the original bug, and it
-        made the detector find nothing on smooth terrain.
-        """
+        """The adaptive-threshold fix, tested directly."""
         base = np.tile(np.linspace(0, 60, 64), (64, 1)).astype(np.uint8)
         high_contrast = np.tile(np.linspace(0, 255, 64), (64, 1)).astype(np.uint8)
 
@@ -237,11 +221,7 @@ class TestClassification:
         ],
     )
     def test_generated_presets_classify_as_intended(self, settings, tmp_path, preset, expected):
-        """End-to-end check of the rule set against terrain built to be that type.
-
-        This is a self-consistency test, not a validation against real labelled
-        Mars terrain - which does not exist in this repo and is not claimed.
-        """
+        """End-to-end check of the rule set against terrain built to be that type."""
         import sys
 
         import cv2

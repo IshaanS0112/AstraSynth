@@ -1,18 +1,4 @@
-"""Orchestration between the HTTP layer and the analysis engines.
-
-Routers stay thin: they validate input, call one function here, and serialise
-the result. All ordering rules ("you cannot plan a path before the terrain has
-been analysed") live in this module.
-
-Persistence note
-----------------
-The hazard and elevation grids are the analysis stage's real output, but they
-are arrays, not rows. They are written to ``storage/<mission_id>/analysis.npz``
-and referenced from ``analysis_metadata``, so path planning reloads them rather
-than re-running the whole CV pipeline. Re-analysing a mission overwrites the
-file; the analysis is deterministic, so a stale read is not a correctness risk,
-only a wasted one.
-"""
+"""Orchestration between the HTTP layer and the analysis engines."""
 
 from __future__ import annotations
 
@@ -69,6 +55,9 @@ def run_terrain_analysis(db: Session, mission: Mission, settings: Settings) -> T
     heatmap_path = hazard_mapper.render_hazard_heatmap(
         hazard, mission.terrain_image_path, directory / "hazard_heatmap.png"
     )
+    uncertainty_map_path, uncertainty_saturate_at = hazard_mapper.render_uncertainty_map(
+        hazard, directory / "uncertainty_map.png"
+    )
 
     # Planning grid: downsample once here so the planner and the stored
     # metadata agree on exactly which grid a path was computed over.
@@ -78,8 +67,16 @@ def run_terrain_analysis(db: Session, mission: Mission, settings: Settings) -> T
     elevation_grid, _ = hazard_mapper.downsample_for_planning(
         analysis.elevation_m.astype(np.float32), settings.planning_grid_max_dim
     )
+    uncertainty_grid, _ = hazard_mapper.downsample_for_planning(
+        hazard.uncertainty, settings.planning_grid_max_dim
+    )
     arrays_path = directory / "analysis.npz"
-    np.savez_compressed(arrays_path, hazard_grid=hazard_grid, elevation_grid=elevation_grid)
+    np.savez_compressed(
+        arrays_path,
+        hazard_grid=hazard_grid,
+        elevation_grid=elevation_grid,
+        uncertainty_grid=uncertainty_grid,
+    )
 
     metadata = {
         **analysis.stats,
@@ -89,6 +86,11 @@ def run_terrain_analysis(db: Session, mission: Mission, settings: Settings) -> T
             "cols": int(hazard_grid.shape[1]),
             "downsample_scale": round(float(scale), 4),
             "meters_per_cell": round(settings.meters_per_pixel * float(scale), 4),
+        },
+        "uncertainty_map_scale": {
+            "saturate_at": round(uncertainty_saturate_at, 5),
+            "basis": "99th percentile of the propagated sigma field",
+            "colormap": "INFERNO, dark = confident, bright = least trusted",
         },
         "arrays_path": str(arrays_path),
     }
@@ -100,6 +102,7 @@ def run_terrain_analysis(db: Session, mission: Mission, settings: Settings) -> T
 
     row.slope_map_path = slope_map_path
     row.hazard_heatmap_path = heatmap_path
+    row.uncertainty_map_path = uncertainty_map_path
     row.terrain_classification = analysis.classification.value
     row.obstacle_contours = [o.as_dict() for o in analysis.obstacles]
     row.analysis_metadata = metadata
@@ -111,6 +114,14 @@ def run_terrain_analysis(db: Session, mission: Mission, settings: Settings) -> T
 
 
 def load_planning_grids(analysis_row: TerrainAnalysisRow) -> tuple[np.ndarray, np.ndarray, float]:
+    hazard_grid, elevation_grid, _, scale = load_planning_arrays(analysis_row)
+    return hazard_grid, elevation_grid, scale
+
+
+def load_planning_arrays(
+    analysis_row: TerrainAnalysisRow,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, float]:
+    """Hazard, elevation, hazard-uncertainty and the downsample scale."""
     metadata = analysis_row.analysis_metadata or {}
     arrays_path = metadata.get("arrays_path")
     if not arrays_path or not Path(arrays_path).exists():
@@ -120,8 +131,13 @@ def load_planning_grids(analysis_row: TerrainAnalysisRow) -> tuple[np.ndarray, n
     with np.load(arrays_path) as data:
         hazard_grid = data["hazard_grid"]
         elevation_grid = data["elevation_grid"]
+        uncertainty_grid = (
+            data["uncertainty_grid"]
+            if "uncertainty_grid" in data.files
+            else np.zeros_like(hazard_grid)
+        )
     scale = float(metadata["planning_grid"]["downsample_scale"])
-    return hazard_grid, elevation_grid, scale
+    return hazard_grid, elevation_grid, uncertainty_grid, scale
 
 
 # --- Stage 2: path planning -------------------------------------------------
@@ -186,11 +202,7 @@ def waypoint_dict(waypoint: Waypoint) -> dict:
 
 
 def rehydrate_path(row: RoverPath) -> PlannedPath:
-    """Rebuild the planner dataclass from a stored row.
-
-    Risk assessment is pure and cheap, so it is recomputed from stored waypoints
-    rather than cached - one fewer thing that can go stale relative to the path.
-    """
+    """Rebuild the planner dataclass from a stored row."""
     waypoints = [
         Waypoint(
             segment_id=w["segment_id"],
@@ -230,12 +242,7 @@ def resolve_path(db: Session, mission: Mission, path_id: uuid.UUID | None) -> Ro
 def run_risk_assessment(
     db: Session, mission: Mission, path_row: RoverPath, settings: Settings
 ) -> MissionRiskReport:
-    """Compute the deterministic half of the report and persist it.
-
-    Deliberately stops before the LLM. The structured context is complete and
-    queryable at this point; generating the narrative is a separate, optional,
-    failure-tolerant step.
-    """
+    """Compute the deterministic half of the report and persist it."""
     analysis_row = mission.terrain_analysis
     if analysis_row is None:
         raise PipelineError("Terrain must be analysed before risk can be assessed.")
@@ -290,6 +297,7 @@ def run_report_generation(
 __all__ = [
     "PathNotFoundError",
     "PipelineError",
+    "load_planning_arrays",
     "load_planning_grids",
     "rehydrate_path",
     "resolve_path",

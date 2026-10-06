@@ -11,12 +11,7 @@ from app.config import get_settings
 
 
 def static_url(path: str | None) -> str | None:
-    """Map an absolute file path under ``storage_dir`` to its served URL.
-
-    Absolute paths are what the CV stage needs on disk, but they must never
-    reach the client. Anything outside ``storage_dir`` resolves to ``None``
-    rather than leaking a filesystem location.
-    """
+    """Map an absolute file path under ``storage_dir`` to its served URL."""
     if not path:
         return None
     try:
@@ -73,6 +68,7 @@ class TerrainAnalysisOut(ORMModel):
     mission_id: uuid.UUID
     slope_map_path: str | None = Field(default=None, exclude=True)
     hazard_heatmap_path: str | None = Field(default=None, exclude=True)
+    uncertainty_map_path: str | None = Field(default=None, exclude=True)
     terrain_classification: str | None
     obstacle_contours: list[dict[str, Any]] | None
     analysis_metadata: dict[str, Any] | None
@@ -95,6 +91,11 @@ class TerrainAnalysisOut(ORMModel):
     @property
     def hazard_heatmap_url(self) -> str | None:
         return static_url(self.hazard_heatmap_path)
+
+    @computed_field
+    @property
+    def uncertainty_map_url(self) -> str | None:
+        return static_url(self.uncertainty_map_path)
 
 
 # --- Paths ------------------------------------------------------------------

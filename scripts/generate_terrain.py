@@ -30,12 +30,7 @@ except ImportError as exc:  # pragma: no cover
 
 
 def diamond_square(size: int, roughness: float, rng: np.random.Generator) -> np.ndarray:
-    """Fractal heightfield via the diamond-square algorithm.
-
-    Chosen over plain Gaussian noise because real terrain is self-similar
-    across scales: large landforms with smaller features riding on them. White
-    noise would give the roughness metric nothing meaningful to distinguish.
-    """
+    """Fractal heightfield via the diamond-square algorithm."""
     n = 1
     while n + 1 < size:
         n *= 2
@@ -81,12 +76,7 @@ def diamond_square(size: int, roughness: float, rng: np.random.Generator) -> np.
 def add_craters(
     heightfield: np.ndarray, count: int, rng: np.random.Generator, depth: float = 0.35
 ) -> np.ndarray:
-    """Stamp bowl-shaped depressions with raised rims.
-
-    The raised rim matters: it is the high-gradient ring that Canny actually
-    detects. A bowl with no rim produces almost no edge response, and the
-    obstacle detector would find nothing.
-    """
+    """Stamp bowl-shaped depressions with raised rims."""
     size = heightfield.shape[0]
     result = heightfield.copy()
     yy, xx = np.mgrid[0:size, 0:size]
