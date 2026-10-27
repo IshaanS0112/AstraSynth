@@ -1,0 +1,185 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: Backend (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # Lower bound and current release. The compiled dependencies are
+        # version-ranged rather than pinned specifically so both resolve.
+        python-version: ["3.10", "3.13"]
+
+    services:
+      # The API tests exercise the real schema, which uses PostgreSQL JSONB and
+      # native UUID columns. Those have no SQLite equivalent, so the suite skips
+      # them unless a database is reachable - without this service block CI would
+      # report success while silently running 84 of 90 tests.
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: astra
+          POSTGRES_PASSWORD: astra
+          POSTGRES_DB: astrasynth
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U astra -d astrasynth"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: backend/requirements-dev.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+
+      - name: Run test suite
+        env:
+          TEST_DATABASE_URL: postgresql+psycopg2://astra:astra@localhost:5432/astrasynth
+        run: python -m pytest -v
+
+      - name: Assert the database-backed tests actually ran
+        # A skipped test is not a passing test. Every module listed here needs a
+        # reachable PostgreSQL - the API suite for JSONB and native UUID columns,
+        # the queue for SELECT ... FOR UPDATE SKIP LOCKED, the migration suite
+        # for running Alembic against a real server. Each skips itself when no
+        # database answers, so without this step CI would exit 0 having proved
+        # nothing about any of them.
+        env:
+          TEST_DATABASE_URL: postgresql+psycopg2://astra:astra@localhost:5432/astrasynth
+        run: |
+          set -euo pipefail
+          # `-o addopts=` matters. pytest.ini already passes -q, so a second -q
+          # on the command line makes it -qq, and -qq suppresses the final
+          # summary line - the line this step greps. The guard was reading an
+          # empty file and passing. Overriding addopts puts this step in charge
+          # of its own verbosity instead of inheriting half of it.
+          python -m pytest -o addopts= -q --no-header -p no:cacheprovider \
+            tests/test_api.py tests/test_api_v3.py tests/test_jobs.py \
+            tests/test_migrations.py tests/test_observability.py | tee result.txt
+          if grep -qE "[0-9]+ skipped" result.txt; then
+            echo "::error::Database-backed tests were skipped - PostgreSQL unreachable"
+            exit 1
+          fi
+          # A collection error that selects nothing would also leave no "skipped"
+          # behind, so the positive case is asserted too.
+          if ! grep -qE "[0-9]+ passed" result.txt; then
+            echo "::error::No database-backed tests ran at all"
+            exit 1
+          fi
+
+  lint:
+    name: Lint and format
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      # Pinned in backend/requirements-lint.txt so a local checkout and CI
+      # cannot disagree about what "clean" means.
+      - run: pip install -r requirements-lint.txt
+      - name: Ruff check
+        run: ruff check .
+      - name: Ruff format check
+        run: ruff format --check .
+
+  frontend:
+    name: Frontend typecheck and build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install dependencies
+        run: npm ci
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Build
+        run: npm run build
+
+  docker:
+    name: Docker images build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build backend image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./backend
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Build frontend image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./frontend
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  pipeline-smoke:
+    name: End-to-end pipeline (no database)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - run: pip install -r backend/requirements.txt
+      - name: Generate terrain and run the full analysis pipeline
+        # Guards the documented numbers: if a change to the CV pipeline, the
+        # planner or the risk engine altered a result, this fails.
+        run: |
+          python scripts/generate_terrain.py --size 256
+          python scripts/run_pipeline_demo.py \
+            data/sample_terrain/synthetic_crater_field_256.png \
+            --rover survey --compare-dijkstra
+      - name: A* must expand fewer nodes than Dijkstra at equal cost
+        run: python scripts/benchmark_planner.py --grid 64 128 --repeats 1
+
+      - name: Full V3 mission - terrain, science, comms, replanning, fleet, Monte Carlo
+        # Exercises every V3 engine together on real generated terrain. The unit
+        # suite checks each in isolation; this is what catches a change that
+        # breaks them only in combination.
+        run: python scripts/run_mission_demo.py --size 192 --planning-dim 48 --trials 8
+
+      - name: V3 planner benchmarks
+        run: python scripts/benchmark_v3.py --grid 48 --repeats 1 --trials 8

@@ -1,0 +1,9 @@
+{
+  "sun": [
+    -0.6909,
+    0.5733,
+    0.4405
+  ],
+  "sunElevationDeg": 35.0,
+  "note": "Sun direction in three.js world space, measured from the rendered HDR."
+}

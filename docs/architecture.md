@@ -1,0 +1,325 @@
+# AstraSynth — Architecture
+
+## Contents
+
+1. [System shape](#system-shape)
+2. [What's real vs simulated](#whats-real-vs-simulated)
+3. [Terrain analysis](#terrain-analysis)
+4. [Hazard scoring](#hazard-scoring)
+5. [Path planning](#path-planning)
+6. [Risk and feasibility](#risk-and-feasibility)
+7. [Report generation](#report-generation)
+8. [Data model](#data-model)
+9. [Bugs found and lessons learned](#bugs-found-and-lessons-learned)
+10. [Known limitations](#known-limitations)
+11. [Design rationale](#design-rationale)
+
+---
+
+## System shape
+
+```
+React + TypeScript                FastAPI
+┌──────────────────┐             ┌────────────────────────────────────────┐
+│ MissionControl   │◄───────────►│ routers/  (thin: validate → delegate)   │
+│  three/Terrain   │   REST      │            ↓                            │
+│  panels · charts │             │ services/autonomy.py   V3 orchestration │
+│ TerrainViewer    │             │ services/mission_pipeline.py            │
+│ HazardOverlay    │             │   ├─ terrain_analyzer   OpenCV          │
+└──────────────────┘             │   ├─ hazard_mapper      weighted score  │
+                                  │   ├─ path_planner       A*              │
+                                  │   ├─ risk_engine        arithmetic      │
+                                  │   └─ report_generator   LLM ← last      │
+                                  └───────────┬────────────────────────────┘
+                                              │
+                        ┌─────────────────────┴──────────────┐
+                        │ PostgreSQL      storage/<mission>/  │
+                        │ 5 tables        terrain · maps ·    │
+                        │ JSONB metadata  analysis.npz        │
+                        └────────────────────────────────────┘
+```
+
+Three layering rules the code actually enforces:
+
+- **Services never import routers.** The analysis engines are pure functions over arrays and dataclasses. Every test in `tests/` calls them directly with no HTTP layer and no database.
+- **Domain enums live in `app/enums.py`, not `app/models/`.** They started in the models package, which meant importing `TerrainClass` pulled SQLAlchemy into the computation layer and broke the no-DB tests. Moving them made the dependency direction one-way: models may import enums, enums import nothing.
+- **The LLM is called from exactly one function**, at the end of one pipeline stage, over data that is already persisted.
+
+---
+
+## What's real vs simulated
+
+### Real
+
+| | |
+|---|---|
+| **Slope estimation** | Sobel gradients on an elevation model, normalised by the 3×3 kernel constant and converted to degrees via `arctan`. A test asserts a ramp rising 1 m per 1 m of ground reads as 45.0°. |
+| **Obstacle detection** | Canny with per-image adaptive thresholds → morphological close → `findContours` → area filter. Contour centroids, areas, and enclosing radii are real measurements from the image. |
+| **Roughness** | Local intensity standard deviation via two box filters (`E[x²] − E[x]²`), O(1) per pixel. |
+| **Hazard scoring** | Weighted sum of three independently normalised terms, bounded to `[0, 1]`, with the weights stored on every result. |
+| **Path planning** | A* over an 8-connected grid with an admissible, consistent heuristic. Verified against Dijkstra on identical input. |
+| **Energy model** | `energy = rate × distance × (1 + k·|rise/run|)`, integrated per step from the elevation model. |
+| **Feasibility** | Total energy against battery capacity. Arithmetic, no model, no heuristic. |
+| **Terrain data** | Synthetic tiles from a documented generator, or real USGS MOLA/HRSC DEM crops. |
+
+### Simulated or out of scope
+
+| | |
+|---|---|
+| **Rover hardware** | No hardware in the loop. Rover configs are parameter sets. |
+| **Live telemetry** | Nothing streams. One static tile per mission. |
+| **Rover specifications** | Battery capacities and energy-per-metre figures are the right order of magnitude for solar planetary rovers, chosen so the three seeded rovers span the feasibility space on a ~1.3 km traverse. They are not manufacturer data. |
+| **Elevation from imagery** | Grayscale intensity is treated as a *linear proxy* for elevation. For a real DEM tile that is correct, and `prepare_usgs_terrain.py` records the true elevation range so the scaling is right. For an ordinary photograph it would be wrong, and the system does not detect the difference. |
+| **Terrain classification accuracy** | Validated for self-consistency against generated presets, not against labelled planetary terrain. There is no ground truth in this repo. |
+| **Mid-traverse re-planning** | The planner is real — D\* Lite repairing against a Bayesian belief, inside a behaviour-tree executive with recoveries. The sensor and the ground it discovers are simulated from a seed. |
+| **Multi-rover coordination** | CBS is real and its answers are verified independently; the rovers, their clocks and their start times are simulated. |
+| **Rover footprint** | A disc of `footprint_radius_m` with an inflation band to `clearance_radius_m`, after Nav2's costmap. Conservative for a rectangular chassis, and with no orientation-dependent collision check. |
+
+---
+
+## Terrain analysis
+
+The input is a single-channel image read as a coarse DEM: intensity `0–255` maps linearly onto `[0, elevation_range_m]` metres. That mapping plus `meters_per_pixel` is what converts pixel gradients into real angles.
+
+```python
+elevation_m   = (gray / 255) * elevation_range_m
+dz_dx         = Sobel(elevation_m, 1, 0, ksize=3) / (8 * meters_per_pixel)
+dz_dy         = Sobel(elevation_m, 0, 1, ksize=3) / (8 * meters_per_pixel)
+gradient      = sqrt(dz_dx² + dz_dy²)          # rise/run, = tan(slope)
+slope_deg     = degrees(arctan(gradient))
+```
+
+The `/8` is the normalisation constant for the 3×3 Sobel kernel. Without it every reported angle is wrong by a fixed factor and nothing downstream notices, because everything downstream is relative. `test_known_ramp_gives_the_trigonometric_answer` is the test that would catch it.
+
+**Obstacle detection** uses adaptive Canny thresholds (see [bugs](#bugs-found-and-lessons-learned) — this was originally fixed thresholds and did not work). A morphological close runs between Canny and `findContours` because raw Canny output is thin broken fragments, and contouring that yields hundreds of slivers rather than the handful of coherent regions a planner cares about.
+
+**Classification** is a threshold rule, not a neural network:
+
+```
+obstacle_area_fraction ≥ 0.20                          → crater_field
+mean_slope ≤ 6° AND roughness ≤ 0.12 AND area < 0.10   → sandy_plain
+otherwise                                               → rocky_highland
+```
+
+Deliberate. There is no labelled planetary terrain set here to train on, and an under-trained CNN would produce a classification nobody could justify. The rule set produces a classification *and the evidence for it* — every result records which rule fired and the measured values that triggered it. A CNN comparison is a documented V2, where the interesting output would be the comparison itself.
+
+---
+
+## Hazard scoring
+
+```
+hazard(x,y) = 0.5 · min(slope_deg / 30°, 1)          slope, saturating
+            + 0.3 · 1/(1 + distance_to_obstacle_m)   obstacle proximity
+            + 0.2 · normalised_local_std              roughness
+```
+
+Each term is independently normalised to `[0, 1]` before weighting, so with weights summing to 1 the score is bounded to `[0, 1]`. That bound is load-bearing: the risk tiers at 0.3 and 0.6 are meaningless without it, and `build_hazard_map` raises if the weights don't sum to 1.
+
+Two choices worth defending:
+
+- **The slope term saturates at 30° instead of dividing by 90°.** Traversability collapses well before vertical; a 30° and a 60° slope should both read as maximally hazardous to a *scorer*, with the hard cut-off enforced separately by the planner.
+- **Obstacle proximity decays smoothly rather than being a binary mask.** `1/(1+d)` nudges the planner into leaving clearance around obstacles instead of hugging their edges — cheap insurance against localisation error in anything real.
+
+The full weight set, formula string, and aggregate statistics are stored as `calculation_basis` in `analysis_metadata` and copied into every report's structured context. Any number in a generated report can be traced back to the formula that produced it.
+
+---
+
+## Path planning
+
+```
+cost(a, b)      = distance_m(a,b) · (1 + hazard(b)) · energy_factor(slope(a,b))
+energy_factor(s) = 1 + k·|rise/run|,  k = 0.5
+h(n)            = euclidean_distance_m(n, goal)
+```
+
+**Admissibility.** `hazard ≥ 0` and `energy_factor ≥ 1`, so every edge satisfies `cost(a,b) ≥ distance_m(a,b)`. Summed over any path, true cost is never below straight-line distance, so `h` never overestimates. It also satisfies the triangle inequality, so it's *consistent* — A* never needs to reopen a closed node, which is why the implementation can use a simple boolean closed set.
+
+`test_matches_dijkstra_cost_on_random_terrain` checks this empirically: an inadmissible heuristic would return a cheaper-looking but genuinely worse path, showing up as a cost mismatch against Dijkstra.
+
+**Two hazard layers.** `(1 + hazard)` is bounded by 2, so cost shaping alone can never force a detour longer than one cell — the planner will drive straight through a crater rim to save fifteen cells. So there are two layers, the same split the ROS navigation costmap uses:
+
+- **cost layer** — `(1 + hazard)`, shapes the route within traversable ground
+- **lethal layer** — `hazard ≥ 0.85`, or a step exceeding the rover's `max_traversable_slope_deg`, removes the edge from the graph entirely
+
+Both blocked counts are recorded in `planner_metadata`, and exhausting the open set raises `PathNotFoundError` naming which constraint did the blocking. That's how a mission becomes genuinely infeasible rather than merely expensive.
+
+For a rover with a footprint, the grid searched is a **layered costmap** rather than the raw hazard field — an obstacle layer, an inflation layer out to the rover's clearance radius, composed by maximum so no layer can lower a cost. Nav2's formula, grid_map's per-layer reductions; [`planners.md`](planners.md#the-layered-costmap) has the details and what it changes (on the bundled tiles: nothing, measured).
+
+**Why A\* over Dijkstra.** Identical optimality guarantee under an admissible heuristic, but Dijkstra expands uniformly in all directions while A* biases expansion toward the goal. Measured at 18–37% fewer node expansions, widening with grid size, at identical cost — `scripts/benchmark_planner.py`.
+
+**Downsampling.** The hazard map the user sees is full resolution; the planning grid is capped at 192 px on the longest edge. A* on a 1024² image is ~1M nodes and ~8M edges, which is not an interactive plan. `INTER_AREA` is used rather than point sampling so a single-pixel hazard spike is averaged into its block instead of being dropped between sample points. Averaging is right for exposure and wrong for obstacles, so lethal ground takes a different route down: the full-resolution lethal mask is max-pooled to the planning grid and arrives as an obstacle layer (bugs 26 and 27).
+
+---
+
+## Risk and feasibility
+
+Two verdicts, deliberately separate:
+
+```
+risk  = 0.6 · mean(hazard along path) + 0.4 · min(energy/capacity, 1)
+        LOW < 0.3 ≤ MEDIUM ≤ 0.6 < HIGH
+
+feasibility:  energy > capacity          → INFEASIBLE
+              energy > 0.85 · capacity   → FEASIBLE_WITH_MARGIN
+              otherwise                   → FEASIBLE
+```
+
+A path can be HIGH risk and FEASIBLE (short, nasty terrain) or LOW risk and INFEASIBLE (gentle, far beyond range). Collapsing them into one score would hide exactly the case a planner most needs to see.
+
+`min(energy/capacity, 1)` is clamped so an infeasible plan can't push the risk score outside `[0, 1]` and break the tiers; the *unclamped* utilisation and the (possibly negative) energy margin are reported separately and drive the feasibility verdict.
+
+Over a full-diagonal traverse the energy term tends to dominate and most plans land in MEDIUM. That's the model behaving correctly rather than a calibration bug — a rover spending 70% of its battery on one drive genuinely isn't low risk. LOW is reachable on short traverses; `test_all_three_tiers_are_reachable` pins all three.
+
+---
+
+## Report generation
+
+Strict ordering:
+
+1. **Collect** — `build_structured_context` assembles the payload from what the deterministic engines already computed and persisted. Nothing in it is model-derived.
+2. **Constrain** — JSON-only contract, an instruction not to introduce facts, and an assistant-turn prefill of `{` so the JSON-only rule is mechanical rather than a request the model might preamble past.
+3. **Validate** — parse, require all three keys, and **drop any cited `segment_id` not present in `high_hazard_segments`**. A hallucinated citation is discarded and counted, never surfaced.
+4. **Degrade** — any failure (no API key, timeout, connection error, unparseable JSON, missing key) falls back to a template built from the same context. Identical numbers, no prose.
+
+The response carries `generated_by: "llm" | "template_fallback"` and the UI renders that badge, so a reader can always tell which one they're looking at.
+
+**The claim, and how to check it:** the AI doesn't compute hazard or risk — the code does, deterministically. The AI narrates already-computed numbers and cites specific segment IDs. `GET /missions/{id}/risk-report` returns the full pre-LLM context; diff it against the narrative.
+
+---
+
+## Data model
+
+Five tables for the V1 pipeline, below; V3 adds `traverse_runs`, `experiments`, `science_targets` and the `jobs` queue, each carrying the seed, parameters and code revision that produced it. Every stage writes its inputs and parameters, not just its outputs.
+
+| Table | Auditability column |
+|---|---|
+| `missions` | `terrain_source` — where the data came from, on every report |
+| `terrain_analyses` | `analysis_metadata` — every CV parameter, hazard weights, aggregate stats |
+| `rover_configs` | — |
+| `rover_paths` | `planner_metadata` — nodes expanded, grid shape, cost constants, blocked-move counts |
+| `mission_risk_reports` | `structured_context` — the frozen pre-LLM payload |
+
+Arrays (hazard grid, elevation grid) go to `storage/<mission_id>/analysis.npz` rather than the database, referenced from `analysis_metadata`. Path planning reloads them instead of re-running the CV pipeline. The `arrays_path` key is stripped by the response schema — it's a server filesystem location and never reaches a client. Same for image paths: the API exposes `/static/...` URLs derived from paths under `storage_dir`, and anything resolving outside that directory serialises to `null`.
+
+The schema is migrated by Alembic, with a test that fails the build if a model changes without a migration — see [`operations.md`](operations.md#schema-migrations).
+
+---
+
+## Bugs found and lessons learned
+
+Written after building and testing, not before.
+
+**1. Fixed Canny thresholds detected nothing.** The first version hard-coded `Canny(60, 160)`. On the synthetic terrain it found **zero** obstacles on two of the three presets and two enormous merged blobs on the third. The gradient magnitudes of a smooth DEM sit in the single digits — a threshold of 60 is above every edge in the image. Fixed by deriving thresholds per image from its own gradient distribution (high = 97th percentile, low = half that, `L2gradient=True` so Canny's internal magnitude matches the one the thresholds came from). The percentile fixes roughly *what fraction* of the image counts as edge, which is the property actually wanted, and it makes the detector contrast-invariant. Absolute thresholds on gradient magnitude are only meaningful if you know the image's contrast in advance.
+
+**2. Obstacle *count* ranked crater fields backwards.** The classifier keyed off contours per megapixel, and a crater field scored *lower* than a rock-strewn highland (34/Mpx vs 191/Mpx) — because craters are few and large while rocks are many and tiny. Switched the crater rule to obstacle **area fraction** (30.7% vs 8.6%), which separates them cleanly. Picking a feature that matches the physical distinction beats tuning a threshold on the wrong feature.
+
+**3. Summing hazard along the path didn't normalise.** The original risk formula was `Σ(hazard) + energy/capacity`. That sum grows with path length, so a long safe traverse outscores a short lethal one and nothing maps onto the 0.3/0.6 thresholds. Switched to the length-normalised **mean**, with peak hazard reported separately so one extreme segment isn't averaged away. Any metric compared against a fixed threshold has to be scale-free in whatever the threshold isn't measured in.
+
+**4. The hazard cost term could never force a detour.** A test asserting the planner routes around a 0.95-hazard band failed — and the planner was right. `(1 + hazard)` caps at 2×, so crossing one lethal cell always beats a fifteen-cell detour. Cost shaping expresses *preference*, never *prohibition*. Added the lethal-hazard layer alongside the cost layer, which is the structure real navigation stacks use and which I'd have copied from the start if I'd thought about the bound.
+
+**5. Enums in the models package dragged SQLAlchemy into the computation layer.** `terrain_analyzer.py` imported `TerrainClass` from `app.models.enums`, which executed `app/models/__init__.py`, which imported SQLAlchemy. The CV code couldn't be imported without a database driver installed. Moved enums to `app/enums.py`. Package `__init__` files are import side effects, and a leaf module importing from a package pays for everything in that package's `__init__`.
+
+**6. `StrEnum` broke on Python 3.10.** 3.11+ only. Switched to `class X(str, Enum)`, which behaves the same for the `.value` access this code does and widens the supported runtime.
+
+**7. The default elevation range produced implausible terrain.** `elevation_range_m = 120` over a 512 px tile at 2 m/px meant 120 m of relief across 1 km — mean slope 23°, and 9,131 candidate moves blocked by the slope limit on a single plan. Dropped the default to 40 m, which gives 2–9° mean slopes across the presets. This is a *scenario* parameter, not a code constant, which is why `prepare_usgs_terrain.py` measures it from the real DEM and prints the value to put in `.env`.
+
+**8. The planner drove diagonally between two lethal cells.** A Theta* test asserted that every segment of a returned route is itself drivable, and it failed on a one-cell diagonal — a move from `(9,17)` to `(10,18)` where `(10,17)` was above the lethal-hazard threshold. The edge check only looked at the *destination* cell, so an 8-connected diagonal could squeeze through the corner where two lethal cells touch, which geometrically means driving through both of them. This was in the V1 planner from the start; no V1 test crossed a diagonal at a hazard corner, so nothing caught it. Fixed by requiring both cells a diagonal clips to be non-lethal — the standard no-corner-cutting rule. The A*-versus-Dijkstra benchmark numbers were unchanged, which is why it had gone unnoticed: the defect only bites on terrain where a lethal boundary runs diagonally past the optimal route. **A constraint checked on nodes is not the same as a constraint checked on edges, and 8-connectivity is where the difference shows up.**
+
+**9. CBS did not terminate on flat ground.** Three rovers crossing an empty 24×24 grid exhausted a 4,000-node constraint-tree budget without ever getting below one remaining conflict — while two rovers in a corridor solved in 13 nodes. The cause is that uniform terrain has an enormous number of *equal-cost* routes, so forbidding an agent one cell at one tick is answered by an equally cheap route that collides one cell further along, and the high-level search wanders a cost plateau. Fixed with the two standard enhancements, both of which turned out to be load-bearing rather than optional: a conflict-avoidance table so the low level breaks *cost ties* toward fewer collisions, and disjoint splitting so the two children of a branch partition the solution space instead of overlapping it. Three and four rovers now solve; five on that deliberately worst-case scenario still exhausts the budget, and reports that rather than returning a route. **An algorithm's published complexity is about the search tree, not about whether your instance sits on a plateau in it.**
+
+**10. Bayesian belief updates made every step a replan.** With a noisy sensor, re-observing a cell shifts its posterior mean slightly, so `BeliefState.update` reported a change on essentially every cell in range on every step — 65 D* Lite repairs over a 64-step traverse. Nothing was wrong: the repairs were genuine and each cost about six vertex expansions. But "replans: 65" is a useless number for an operator, because 62 of those repairs confirmed the existing route. Added a `rerouted` flag comparing the next step before and after each repair, and reported `reroutes` separately. **A metric that counts work done is not the same as a metric that counts decisions changed, and only the second one belongs in an event log.**
+
+**11. Uncertainty propagation exceeded the range of the thing it described.** The obstacle-proximity term is bounded to [0, 1], and first-order propagation gave it a standard deviation of 2.0 right on an obstacle edge — because the derivative of `1/(1+d)` is `−1/(1+d)²`, which is large at `d = 0`, and linear propagation has no idea the quantity is bounded. Clipped every component σ to 0.5, the maximum standard deviation a [0,1]-bounded variable can have. **The clip is not a cosmetic cap: it is the point where the linear approximation stops being valid, and it belongs in the output as a stated assumption rather than in a comment.**
+
+**12. The API told the client a range its own data fell outside.** `GET /terrain-grid` ships each layer rounded — elevation to 3 decimals, hazard to 4 — and shipped a `ranges` block computed from the *unrounded* arrays. A rounded minimum can sit below the true minimum, so a renderer normalising a layer by its stated range produces a value outside `[0, 1]` for the one cell at the extreme, and an out-of-gamut colour. Caught by a test asserting the obvious invariant — that the range bounds the data beside it — which is exactly the kind of assertion that looks too trivial to write. Fixed by rounding first and deriving the ranges from the arrays that are actually sent. **A payload and the metadata describing it have to be computed from the same values, not from the same source values.**
+
+**13. Two interfaces with one name silently became one impossible type.** The V3 frontend types introduced `export interface Waypoint { x, y }` into a module that already exported a `Waypoint` with `segment_id`, `hazard_score`, `slope_deg` and three more fields. TypeScript does not reject that: it *merges* same-named interfaces, so the result was a single type requiring every field of both, and the error surfaced somewhere else entirely — a `{x, y}` literal reported as "missing 6 properties". Renamed to `GridPoint`. **Declaration merging is a feature; in a module you are appending to, it is a trap, and a duplicate-name collision does not announce itself where you made it.**
+
+**14. `filterwarnings = error` broke the whole API suite on someone else's release.** Every API test errored on collection with `DeprecationWarning: The anyio.abc.BlockingPortal alias is deprecated` — raised inside Starlette's `TestClient` import, from a transitive dependency nothing here pins. The policy that makes warnings useful (our own deprecations fail the build) had made an unrelated upstream release fail it too. Fixed with a single exemption that names the library, the alias and the reason, above `error::DeprecationWarning` rather than instead of it. **A blanket `error` on warnings you do not control is a scheduled outage; the fix is a narrow, annotated exemption, not turning the policy off.**
+
+**15. Exact pins on compiled packages broke the install on a newer Python.**
+`requirements.txt` pinned `psycopg2-binary==2.9.10` and `numpy==2.2.6` - the exact versions the suite was validated against. On Python 3.14 neither has a wheel, so pip fell back to building psycopg2 from source and died on `pg_config executable not found`, taking the whole install with it. An exact pin on a package with compiled extensions doesn't just pin the version, it implicitly pins the set of Python versions that release published wheels for. Now: pure-Python dependencies are pinned exactly for reproducibility, compiled ones get a floor (the first release with wheels for the newest supported Python) and a major-version ceiling. The install is verified against Python 3.10, 3.12 and 3.14 with `pip download --only-binary=:all: --python-version ...`, which resolves wheels without installing anything.
+
+**16. Rounding stored values broke exact test comparisons.** `total_distance_m` is rounded to millimetres for storage, so `9√2 = 12.727922...` comes back as `12.728` and a `rel=1e-6` assertion fails. Kept the rounding (millimetre precision on a kilometre traverse is not the weak link) and moved the tolerance to match the stored precision. Worth being deliberate about where rounding happens rather than discovering it from a failing test.
+
+**17. Property-based testing found that half the cost model disagreed with the other half.** `PlanningGrid.segment` — the any-angle feasibility-and-cost test Theta\* uses — divided consecutive elevation *samples* by the sample spacing. The elevation field is piecewise constant per cell, so at two samples per cell that reports exactly **twice** the real gradient, and at four samples, four times. Theta\* was therefore rejecting straight segments that `evaluate_edge` accepts one cell at a time, on terrain where the true slope sits between the limit and half the limit. Found by a Hypothesis property asserting the two paths through the cost model agree; no hand-written test had ever put a rover's slope limit inside that band. Fixed by measuring the gradient between consecutive *distinct cells* over their real separation — the one-cell baseline `evaluate_edge` uses — in `segment` and in `segment_energy_kwh`, which feeds an energy figure compared against a battery. **A derivative of a piecewise-constant field is a property of the field's resolution, not of your sampling rate, and over-sampling it does not refine the answer, it scales it.**
+
+**18. A supercover cell list is a set, not a route.** The same check then read consecutive entries of `supercover_cells` as a traversal order. On an exact diagonal the supercover of a line includes *both* corner cells it clips, so consecutive entries can be two cells the rover never drives between — the check was measuring a step that does not exist in the path. Fixed by walking the sampled line's distinct cells instead, and by saying so where the list is produced. **A function that answers "which cells does this line touch" has not answered "in what order does a vehicle enter them", and the two differ precisely at the diagonals an any-angle planner exists to use.**
+
+**19. `segment` refused to let a rover leave lethal ground.** It tested every supercover cell against the lethal-hazard threshold, including the cell being left. `evaluate_edge` tests only the cell being *entered*, and deliberately: a belief update can reclassify the ground a rover is already standing on, and D\* Lite's whole job is to repair a route from there. So a mid-traverse hazard discovery could leave the incremental planner with a start state from which every any-angle segment was rejected. Fixed by skipping the origin, matching the grid step. **When two code paths implement the same constraint, the invariant worth testing is not that each is correct in isolation but that they answer identically — which is what a metamorphic property does and an example-based test does not.**
+
+**20. The CI guard that proved the database tests ran was reading an empty file.** A step exists precisely because a skipped test is not a passing test: it re-runs the database-backed modules and fails the build if the output says "skipped". It had never failed, and it could not have. `pytest.ini` sets `addopts = -q`, the step passed `-q` again, and the two compose into `-qq` — which suppresses the final summary line altogether. `grep -q "skipped"` was searching output that contained no summary at all, so the guard returned "clean" for every possible result, including a run where every test skipped. Found while widening the step to cover the queue, migration and observability suites; confirmed by pointing `TEST_DATABASE_URL` at a closed port, which produces `23 skipped` and used to sail through. Fixed with `-o addopts=` so the step owns its own verbosity, an anchored `[0-9]+ skipped` pattern, and a matching assertion that *some* test passed — because a collection error selects nothing and also leaves no "skipped" behind. **A guard that has never fired is not evidence that the thing it guards against never happens; test the guard by causing the failure, or it is decoration.** The same applies to lint: CI pinned `ruff==0.9.2` while `requirements-dev.txt` pinned nothing, so a fresh checkout installed 0.16.9 and reported 21 findings on a tree CI calls clean. The pin now lives in `requirements-lint.txt`, which both read.
+
+**21. Two settings existed, were documented, and did nothing.** `WORKER_POLL_SECONDS` and `JOB_LEASE_SECONDS` are read into `Settings`, each with a comment explaining what it is for — and neither reached the worker. `Worker.__init__` declared `poll_interval: float = 1.0` and `lease_seconds: float = jobs.DEFAULT_LEASE_SECONDS`, `WorkerPool` passed neither, and nothing else did either. What made this invisible is that the literals *equalled* the settings defaults: `1.0` and `90.0` both ways. So the worker behaved exactly as the configuration said it would, right up until somebody changed the configuration. Found while writing `docs/operations.md` — documenting a knob means checking it turns something, and this one did not. Fixed by defaulting both parameters to `None` and resolving them from `Settings`, threading them through `WorkerPool`, and making `--poll-interval` default to `None` so that omitting the flag means "use the configured value" rather than "use argparse's number". Four tests now assert the wire rather than the value, each setting something the default is not. **A default that agrees with the configured value is not a safe default, it is a disguise: it makes dead configuration untestable by inspection, and the only way to find it is to set the knob to something else and check that something moves.**
+
+**22. A comment asserted a middleware order the framework had reversed.** `app/main.py` added `RequestContextMiddleware` first, above a comment reading "Outermost, so it sees the final status of everything including CORS rejections and unhandled exceptions." Starlette's `add_middleware` **inserts at the front** of the middleware list, and the stack is built by wrapping that list in reverse — so the *last* one added is the outermost, and request context was in fact the innermost of the two. CORS preflights, which `CORSMiddleware` answers and short-circuits, never reached it: they were absent from the logs and from `astra_http_requests_total` entirely. Found while inserting a third middleware, where the order genuinely decides behaviour — a 401 raised outside `CORSMiddleware` comes back without CORS headers, which a browser reports as a CORS failure, hiding the status that would have explained it. Now added in reverse of the reading order, with the stack drawn in the comment and a test asserting `[m.cls.__name__ for m in app.user_middleware]`. **A comment about ordering is a claim about a framework's semantics, and the only way to hold one true is to assert it in a test — this one had been wrong from the moment it was written and cost nothing until it mattered.**
+
+**23. Running a migration switched off all structured logging.** Every request log line vanished after boot, and nothing errored. `alembic/env.py` calls `fileConfig(alembic.ini)` — correct for the CLI, destructive in-process: `fileConfig` defaults to `disable_existing_loggers=True`, and `alembic.ini` sets the root logger to WARNING with a plain console handler. So `prepare_schema` on startup replaced the JSON handler `configure_logging` had just installed and raised the root level above INFO, for the life of the process. Because `AUTO_MIGRATE` defaults to on, that was the *normal* deployment, not an edge case: the entire observability layer was being disabled by the thing that runs immediately before it is needed. Found by reading a real log file during a smoke test rather than by any test — the suite configures its own handlers per test and never had the two interact. Fixed with alembic's documented `configure_logger` attribute, which `app/db/migrate.py` sets to `False` while the CLI leaves it unset, plus `disable_existing_loggers=False` so even the CLI path only adds. A test now asserts the handler identity *and* the level survive an upgrade, and it was checked by reverting the fix and watching it fail. **A library's logging configuration is global mutable state, and calling it from inside an application is not configuration, it is a reset. The absence of log lines is the hardest defect class to notice, because the signal that something is wrong is the same signal as nothing happening.**
+
+**24. The correlation id was missing from the one line worth correlating.** `request_id_var.reset(token)` sat in a `finally` attached to the `try` around `call_next` — which put the reset *before* the summary line carrying route, status and duration. Every line logged by application code during a request had a `request_id`; the access log line itself did not. So the field existed everywhere except the place you would start from when investigating a slow request. Fixed by widening the `try` so the reset happens after everything that logs. **A `finally` marks the end of a scope, and the scope of a correlation id is the whole handler, including its own epilogue.**
+
+**25. A 401 was labelled as a request to a URL that does not exist.** `scope["route"]` is set by the router, so a response produced by an inner middleware — an authentication rejection, most obviously — has no route, and `_route_template` fell back to `unmatched`. That put every rejection in the same metric series as genuine 404s and lost which endpoint was being called, in exactly the case an operator most wants to know: "is one client failing to authenticate against one endpoint, or is everything down?". Fixed by matching the request against the route table on that fallback path only, returning the template on a full match and still the template on a partial one (a 405 is about the method; the path is the useful label). Cardinality stays bounded by the number of routes. **A fallback value that means "no such thing" must not also be used for "we did not look", because a metric label is a claim and those are two different claims.**
+
+**26. Averaging the hazard map to planning resolution erased thin walls.** The planning grid is the full-resolution hazard map reduced by `INTER_AREA` — a mean — and the lethal layer was a threshold on that mean. A wall narrower than a cell does not survive that: on a test map with a two-pixel wall running its full height, reduced four to one, the wall straddles a cell boundary and every cell it touches reads **0.54** against a lethal threshold of 0.85. The planner was handed a map with a gap in a wall the full-resolution data had no gap in, and mission control drew the same gap. Fixed by giving each layer its own reduction, the way grid_map does: costs are still averaged, but the lethal mask is computed at full resolution and max-pooled, so one lethal pixel makes its cell an obstacle. Two tests pin it: A\* drives straight across a one-pixel ridge on a 512-pixel tile without the obstacle layer and is stopped by it with the layer, and the wall survives into the 48-cell display grid. **A reduction is a claim about what a layer means. A mean says "how much, on average"; an obstacle layer has to say "is there anything at all", and only a max answers that.**
+
+**27. The max-pool could report a cell's maximum below its mean.** The first max-pool reduced over disjoint integer windows. `INTER_AREA` does not: at a non-integer ratio — 512 pixels to 192 cells is 2.67 per cell — a pixel on a cell boundary contributes a fractional weight to *both* cells. So a lethal pixel on a boundary could raise a cell's mean while falling outside the window its max was taken over: the cost layer saw the obstacle and the obstacle layer did not, an impossible state that no test about obstacles would notice. Found by asserting the invariant cell by cell — wherever the mean is above zero the max must be an obstacle — and fixed by windows that overlap wherever a source pixel straddles a boundary, so every pixel the mean gave weight to, the max now sees. `test_the_max_sees_every_pixel_the_mean_weighed` pins it; on its mask the disjoint version fails 285 of 766 cells. About 2.4 ms per 512-pixel tile. **Two reductions of the same array must agree on which inputs each output came from, or the layers disagree about the world in exactly the cells where it matters, the boundaries.**
+
+**28. A rover that drove and then got stuck was reported as never having had a route.** Porting the traverse loop to a behaviour tree, the end-to-end output was diffed against the pre-port run, and two Monte Carlo trials had changed failure mode: `NO_SAFE_PATH` where the old loop said `ROVER_BLOCKED`. The new `ComputePathToGoal` reported whatever the planner said, and the planner only knows it found no route *from here* — whether "here" was the start or a kilometre in is the executive's knowledge, not the planner's. Fixed by classifying in the executive on whether the rover had moved; the diff then came back identical, and two tests now pin the distinction. **The acceptance test for a refactor that is meant to change nothing is a diff of its outputs, not a passing test suite — the suite here passed throughout, because no test had pinned which of two similar failure modes a stuck rover gets.**
+
+**29. The recovery cycle would have restarted at its first recovery every time.** Nav2 escalates: the first failure gets the cheapest recovery, the next failure the next one. In the tree that is a `RoundRobin` under a `RecoveryNode`, and the obvious implementation of the `RecoveryNode` — halt every child before retrying the main branch — resets the round robin's index, so every failure gets the first recovery again and the escalation never happens. BT.CPP v4 halts only a child that is *running*; a finished child is reset, not halted, and that difference is what lets the cycle keep its place. `test_successive_failures_get_successive_recoveries` pins the call sequence: main, first recovery, main, second, main, third, main. **When porting a framework's semantics, the behaviour that matters most is often in the operation that looks like housekeeping — here "halt" and "reset" are different verbs, and the design depends on the difference.**
+
+**30. The 3-D terrain did not match its own legend.** The hazard layer rendered in pale mint and pastel yellow beside a legend running from dark green to red. Two compounding causes: the ramp colours were written into the vertex colour attribute as sRGB values, which three.js reads as linear light, so every colour came out lighter; and ACES filmic tone mapping then desaturated and shifted what was left. A 0.4 hazard read as a 0.2. Fixed by converting each colour from sRGB to linear before it is written, switching to Khronos PBR Neutral tone mapping, and balancing the lights so flat ground renders at its legend colour. Found by looking at a screenshot next to the legend, not by any test — nothing asserts what a pixel looks like. **On a data layer the colour is the reading, so the renderer's colour pipeline is part of the measurement, and a cinematic default is a calibration error.**
+
+**31. A test fixture turned the in-process workers off, and they stayed on.** A queue test failed once in a full run: cancelling a job returned `CANCELLING` instead of `CANCELLED`, because a worker had already claimed it — in a module whose fixture sets `WORKER_THREADS=0` precisely so that no worker races the test. The lifespan sized the worker pool from `settings`, a module-level copy taken when `app.main` was first imported, while the routers read `get_settings()` per request. When another test module imported the app first, the fixture's override reached the routers and not the pool: `/jobs` reported zero in-process workers while one was running and taking jobs. In production the two copies are the same object, which is why it never showed there. Fixed by reading settings in the lifespan at startup; a test asserts the running pool's size equals the reported one, and was watched failing before the fix. **Two readers of one configuration at two different times are two configurations, and the one that is reported is not necessarily the one that is running.**
+
+
+**32. The wheel tracks were drawn, and invisible from every camera.** The Surface view lays two strips along the driven path, and screenshots showed nothing. The strip's triangles were wound clockwise as seen from above, so three.js treated their fronts as facing down and culled them from any camera over the ground — the mesh existed, cast no error, and could only have been seen from under the terrain. Swapping the index order in `wheelTracks` fixed it; the comment beside it says which way the faces point, because nothing else would.
+
+**33. A p95 printed smaller than the mean it exceeded.** The System page estimates quantiles from the Prometheus histogram the way `histogram_quantile` does, which returns the last finite bucket bound when the quantile falls in the open-ended one. `POST /monte-carlo` showed a mean of 36.93 s beside a p95 of 30.00 s. The estimate now carries whether it is a floor, and prints as "> 30 s" — PromQL's convention is fine in a query; on a dashboard it reads as a measurement.
+
+**34. A dropped terrain file could never be submitted.** The new-mission drop zone put the file in component state, but the hidden `<input type="file" required>` never received it, so the browser's own validation blocked the submit with a tooltip pointing at an invisible element. Found by driving the form with a synthetic drop event rather than only the file picker. The submit button already required a file, so `required` went.
+
+**35. The README called a whole-run total a running count.** The hero caption said the rover had made "194 D\* Lite repairs so far" at 58% of its drive. The telemetry panel shows `run.replans`, the total for the whole traverse, at every playback position; recapturing at 58% and 100% gave the same figure, which is how it surfaced. A number in a caption is checked against the code that produces it, not against what the screen seems to mean.
+---
+
+## Known limitations
+
+- **Descending costs the same as climbing.** `energy_factor` uses `|rise/run|`. A real rover spends less going down than up (and recovers nothing). This over-charges descents; correcting it needs an asymmetric factor and a regenerative-braking assumption that would be invented rather than measured.
+- **The planning grid caps at 192 px.** A *lethal* feature narrower than one grid cell survives as an obstacle (it is max-pooled), but a merely costly one is averaged into its cell and can't be routed around individually.
+- **The bundled tiles never exercise the costmap.** None of the three generated presets has a cell over the lethal threshold, so the footprint and clearance band change nothing on them. They are exercised by tests on terrain built to have lethal ground; a real DEM with steep crater walls is where they would matter.
+- **Grayscale intensity is assumed to be a linear elevation proxy.** True for a DEM, false for a photograph, and the system can't tell them apart.
+- **Authentication is a shared secret, and it is off by default.** With `API_KEY` set the whole surface (including `/static`) requires it; unset, everything is open, which is what the offline demo and CI rely on. What it authenticates is the *deployment*, not the person: there are no accounts and nothing is scoped per-user, so anyone who can reach the dashboard gets everything it can do. The moment missions belong to people this is the wrong mechanism and should be replaced rather than extended. The shipped frontend sends no key — the proxy in front injects it, so the secret does not end up in a browser bundle. See [`operations.md`](operations.md#authentication).
+- **Uploads are capped at 25 MB and extension-checked**, but not content-sniffed — a renamed non-image fails at `cv2.imread` with a 422 rather than at upload.
+- **Classification thresholds are tuned against generated terrain.** Real USGS tiles will likely need re-tuning; the parameters are all in `config.py` for exactly that reason.
+- **Single terrain image per mission.** No mosaicking, no georeferencing across tiles.
+
+---
+
+## Design rationale
+
+The questions this design most often raises, and the reasoning behind each
+choice.
+
+**Walk me through the terrain pipeline. Why those OpenCV operations?**
+Sobel for slope because slope *is* the spatial derivative of elevation, and the 3×3 kernel gives it cheaply at every pixel — normalised by 8 and passed through `arctan` so the output is degrees, not an arbitrary number. Canny for obstacles because crater rims and rock edges are gradient ridges and Canny's non-maximum suppression plus hysteresis is the standard way to get thin connected edges out of those. `findContours` turns the edge map into discrete regions with measurable centroids and areas, which is what a planner needs — an edge image isn't an obstacle list. Roughness by local variance via box filters because it's O(1) per pixel regardless of window size and it's interpretable.
+
+**Is the hazard heatmap real image processing or a coloured overlay?**
+Real. The heatmap is a render of the same `[0,1]` array the planner consumes as its cost surface. If it were decorative, changing the weights would change the picture and not the path. It changes both.
+
+**Why A\* over Dijkstra? Is your heuristic admissible?**
+Same optimality guarantee, fewer expansions, because the heuristic biases search toward the goal. Admissible because every edge cost is ≥ its straight-line distance — `hazard ≥ 0` and `energy_factor ≥ 1` are both multiplicative factors of at least 1 — so straight-line distance can never overestimate. It's also consistent, so no node reopening. Measured: 18–37% fewer expansions than Dijkstra at identical total cost.
+
+**What's actually energy-aware about the cost function?**
+Each step multiplies by `1 + k·|rise/run|`, where rise/run comes from the elevation model, so climbing a 20° grade costs about 18% more energy per metre than flat ground. Energy accumulates in kWh along the path using the rover's `energy_per_meter_kwh`, and that total is what the feasibility check tests against battery capacity. It's not a proxy — it's the number that decides go/no-go.
+
+**Does your AI compute risk, or narrate it?**
+Narrate. Every figure exists in `structured_context` before any model call, that context is stored and returned by the API, and the validator drops any segment ID the model cites that isn't in it. With no API key configured the system still produces complete reports from a template.
+
+**How do you detect an infeasible path?**
+Two ways. Energy: total drive energy exceeds battery capacity — arithmetic. Topology: A* exhausts the open set because the rover's slope limit or the lethal-hazard threshold walls off every corridor, and `PathNotFoundError` names which constraint did it. That surfaces as a 422 with `error: no_traversable_path`, not a 500.
+
+**What happens if the LLM call fails?**
+Templated fallback with the same numbers, `narrative_source: "template_fallback"`, and the reason recorded. The endpoint never returns 5xx for a model problem. Tested by monkeypatching the client to raise.
+
+**Real or synthetic terrain? Would this generalise to Mars?**
+Both are supported. The repo ships a fractal generator so it runs offline and in CI; `prepare_usgs_terrain.py` crops real MOLA/HRSC DEM tiles and reads the true elevation range off the data. The CV and planning code is identical either way — nothing is tuned to the generator except the classification thresholds, which is exactly what I'd expect to re-tune on real tiles and why they're all in `config.py`.

@@ -1,0 +1,34 @@
+# Pinning policy
+# --------------
+# Pure-Python packages are pinned exactly, for reproducibility.
+#
+# Packages with compiled extensions are given a floor and a ceiling instead.
+# An exact pin on a compiled package silently ties the project to the set of
+# Python versions that release happened to publish wheels for - install it on a
+# newer Python and pip falls back to building from source, which then fails on
+# a missing system toolchain. That is what an exact `psycopg2-binary==2.9.10`
+# did here on Python 3.14: no cp314 wheel, source build attempted, and it died
+# on `pg_config executable not found`. The floors below are the first releases
+# that ship cp314 wheels.
+#
+# Tested on Python 3.10 and 3.14. Requires 3.10+.
+
+# --- Pure Python: exact pins --------------------------------------------
+fastapi==0.141.1
+uvicorn[standard]==0.52.1
+sqlalchemy==2.0.51
+alembic==1.14.1
+pydantic==2.13.4
+pydantic-settings==2.15.0
+python-multipart==0.0.32
+anthropic==0.121.0
+python-dotenv==1.2.2
+
+# --- Compiled: ranged so pip picks a wheel for the running Python --------
+# 2.9.11 is the first release with cp314 wheels.
+psycopg2-binary>=2.9.12,<3
+# 2.3.2 is the first with cp314 wheels; <3 keeps the numpy 2.x API.
+numpy>=2.2,<3
+# Ships cp37-abi3 wheels, so one wheel covers every Python 3.7+.
+# macOS wheels require macOS 13+.
+opencv-python-headless>=4.10,<5

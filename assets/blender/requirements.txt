@@ -1,0 +1,2 @@
+# Blender as a Python module. The bpy 5.0 wheels are built for CPython 3.11 only.
+bpy==5.0.1

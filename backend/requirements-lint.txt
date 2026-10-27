@@ -1,0 +1,8 @@
+# The linter is pinned exactly, and pinned in *one* place.
+#
+# ruff gains rules with every minor release, so an unpinned linter means a fresh
+# checkout disagrees with CI about whether the tree is clean - and the developer
+# who hits that has to guess which of the two is authoritative. Bumping this pin
+# is a deliberate change with its own diff, not something that happens because
+# somebody reinstalled.
+ruff==0.9.2
