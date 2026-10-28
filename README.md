@@ -74,7 +74,7 @@ The planners never see the terrain the rover has not observed; the executive dec
 ## Quick start
 
 ```bash
-git clone https://github.com/<your-account>/AstraSynth.git && cd AstraSynth
+git clone https://github.com/IshaanS0112/AstraSynth.git && cd AstraSynth
 python scripts/generate_terrain.py      # synthetic sample tiles, offline
 docker compose up --build               # Postgres + API + console
 python scripts/seed_demo.py             # optional: fill the console with real runs (~3 min)
